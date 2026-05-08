@@ -27,13 +27,7 @@ from app.config import settings, get_llm_config
 
 logger = logging.getLogger("aura.memory")
 
-# FAISS 延迟导入
-_faiss_available = False
-try:
-    import faiss
-    _faiss_available = True
-except ImportError:
-    logger.warning("[AURA→记忆] faiss 未安装，将使用降级模式（全量注入）")
+import faiss
 
 
 class MemoryManager:
@@ -47,7 +41,8 @@ class MemoryManager:
         self._initialized = False
         self._round_counter: Dict[str, int] = {}
         self._summary_lock = asyncio.Lock()
-        self._dimension = 768  # 默认向量维度（text-embedding-3-small 是 1536，用 768 兼容更多模型）
+        self._dimension = 1536  # Kimi text-embedding-v2 / DeepSeek text-embedding-v2 均为 1536 维
+        self._next_seq = 0     # 单调递增序列号：AURA 生成记忆的时序标记
 
     async def initialize(self):
         """初始化：创建 SQLite 表 + 初始化 FAISS"""
@@ -58,27 +53,30 @@ class MemoryManager:
         self._init_sqlite()
 
         # 2. 初始化 FAISS
-        if _faiss_available:
-            try:
-                # 尝试从磁盘加载已有索引
-                index_path = "faiss_index.bin"
-                meta_path = "faiss_meta.json"
-                if os.path.exists(index_path) and os.path.exists(meta_path):
-                    self.index = faiss.read_index(index_path)
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        saved = json.load(f)
-                        self.documents = saved.get("documents", [])
-                        self.metadatas = saved.get("metadatas", [])
-                    logger.info(f"[AURA→记忆] FAISS 索引已加载，记忆数: {len(self.documents)}")
-                else:
-                    # 创建空索引（使用 L2 距离）
-                    self.index = faiss.IndexFlatL2(self._dimension)
-                    logger.info(f"[AURA→记忆] FAISS 索引已创建（维度: {self._dimension}）")
-            except Exception as e:
-                logger.error(f"[AURA→记忆] FAISS 初始化失败: {e}，使用降级模式")
-                self.index = None
-        else:
-            logger.warning("[AURA→记忆] faiss 未安装，使用降级模式")
+        try:
+            index_path = "faiss_index.bin"
+            meta_path = "faiss_meta.json"
+            if os.path.exists(index_path) and os.path.exists(meta_path):
+                self.index = faiss.read_index(index_path)
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                    self.documents = saved.get("documents", [])
+                    self.metadatas = saved.get("metadatas", [])
+                    # 恢复单调序列号：取已有记忆最大 insert_seq + 1
+                    if self.metadatas:
+                        max_seq = max(
+                            (m.get("insert_seq", 0) for m in self.metadatas),
+                            default=-1
+                        )
+                        self._next_seq = max_seq + 1
+                logger.info(f"[AURA→记忆] FAISS 索引已加载，记忆数: {len(self.documents)}, next_seq={self._next_seq}")
+            else:
+                # 创建空索引（使用 L2 距离）
+                self.index = faiss.IndexFlatL2(self._dimension)
+                logger.info(f"[AURA→记忆] FAISS 索引已创建（维度: {self._dimension}）")
+        except Exception as e:
+            logger.error(f"[AURA→记忆] FAISS 初始化失败: {e}")
+            raise RuntimeError(f"FAISS 初始化失败，请检查 faiss-cpu 是否已正确安装: {e}")
 
         self._initialized = True
         logger.info("[AURA→记忆] MemoryManager 初始化完成")
@@ -273,9 +271,11 @@ class MemoryManager:
                     seen.add(normalized)
                     unique_memories.append(mem)
 
-            # 检查是否已导入
-            if len(self.documents) > 0:
-                logger.info(f"[AURA→记忆] FAISS 已有 {len(self.documents)} 条记忆，跳过重复导入")
+            # 简单去重：跳过已在 documents 中的记忆
+            already = set(self.documents)
+            unique_memories = [m for m in unique_memories if m not in already]
+            if not unique_memories:
+                logger.info("[AURA→记忆] 所有 TAVO 记忆均已存在，跳过导入")
                 return 0
 
             # 逐条生成 embedding 并添加
@@ -288,9 +288,10 @@ class MemoryManager:
                 self.metadatas.append({
                     "source": "tavo_import",
                     "index": i,
-                    "position": i / max(len(unique_memories) - 1, 1),
+                    "insert_seq": self._next_seq,
                     "imported_at": datetime.now().isoformat()
                 })
+                self._next_seq += 1
                 imported += 1
 
                 # 每 10 条保存一次进度
@@ -306,7 +307,7 @@ class MemoryManager:
             return 0
 
     async def search(self, query: str, top_k: int = 5) -> List[str]:
-        """语义检索：用 query 生成 embedding → FAISS 搜索"""
+        """语义检索：用 query 生成 embedding → FAISS 搜索 → 时间加权重排"""
         if not self.index or len(self.documents) == 0:
             logger.warning("[AURA→记忆] FAISS 不可用或为空，返回空结果")
             return []
@@ -316,33 +317,45 @@ class MemoryManager:
             query_emb = await self._get_embedding(query)
             query_array = np.array([query_emb], dtype=np.float32)
 
-            # FAISS 搜索
+            # FAISS 搜索：召回候选池（top_k * 2）
             k = min(top_k * 2, len(self.documents))
             distances, indices = self.index.search(query_array, k)
 
             if len(indices) == 0 or len(indices[0]) == 0:
                 return []
 
-            # 时间加权重排序
+            # 动态时间归一化：基于当前全量数据的 insert_seq 范围
+            all_seqs = [m.get("insert_seq", 0) for m in self.metadatas]
+            min_seq = min(all_seqs)
+            max_seq = max(all_seqs)
+            seq_range = max(max_seq - min_seq, 1)
+
+            gamma = settings.rag_time_gamma
+            semantic_weight = settings.rag_semantic_weight
+            time_weight_base = 1.0 - semantic_weight
+
             scored = []
             for i, idx in enumerate(indices[0]):
                 if idx < 0 or idx >= len(self.documents):
                     continue
-                # L2 距离越小越相似 → 转换为相似度
+                # L2 距离 → 相似度（越大越相似）
                 semantic = 1.0 / (1.0 + distances[0][i])
                 meta = self.metadatas[idx]
-                position = meta.get('position', 0.5)
-                time_weight = position
-                final_score = semantic * 0.6 + time_weight * 0.4
-                scored.append((final_score, self.documents[idx]))
+                seq = meta.get("insert_seq", min_seq)
+                # 动态归一化 + 幂次增强（gamma）
+                normalized = (seq - min_seq) / seq_range
+                time_weight = normalized ** gamma
+                final_score = semantic * semantic_weight + time_weight * time_weight_base
+                scored.append((final_score, idx))
 
             # 按分数降序排列，取 Top-K
             scored.sort(key=lambda x: x[0], reverse=True)
-            top_results = [doc for score, doc in scored[:top_k]]
+            top_results = [self.documents[idx] for score, idx in scored[:top_k]]
 
             logger.info(
                 f"[AURA→RAG] 检索 \"{query[:50]}...\" → "
-                f"召回 {len(top_results)} 条 (共 {len(self.documents)} 条)"
+                f"召回 {len(top_results)} 条 (共 {len(self.documents)} 条, "
+                f"seq范围[{min_seq},{max_seq}], γ={gamma})"
             )
             return top_results
 
@@ -351,7 +364,7 @@ class MemoryManager:
             return []
 
     async def add_memory(self, text: str, metadata: Optional[dict] = None):
-        """新增单条记忆到 FAISS"""
+        """新增单条记忆到 FAISS，自动分配单调 insert_seq"""
         if not self.index:
             return
 
@@ -361,14 +374,15 @@ class MemoryManager:
             self.index.add(emb_array)
 
             meta = metadata or {}
-            if "position" not in meta:
-                meta["position"] = 1.0
+            # 分配单调递增序列号作为时间代理
+            meta["insert_seq"] = self._next_seq
+            self._next_seq += 1
 
             self.documents.append(text)
             self.metadatas.append(meta)
 
             await self._save_faiss()
-            logger.info(f"[AURA→记忆] 新增记忆: {text[:80]}...")
+            logger.info(f"[AURA→记忆] 新增记忆(seq={meta['insert_seq']}): {text[:80]}...")
         except Exception as e:
             logger.error(f"[AURA→记忆] 新增记忆失败: {e}")
 
@@ -401,23 +415,27 @@ class MemoryManager:
                 dialogue_text = self._format_dialogue_for_summary(recent_dialogues)
                 existing_memories = await self._get_recent_memories_for_context(5)
 
-                summary_prompt = f"""你是一个角色扮演记忆提取助手。请分析以下对话，提取出需要长期记住的关键信息。
+                summary_prompt = f"""你是一个角色扮演记忆提取助手。请分析以下对话，提取需要长期记住的关键信息。
 
-要求：
+提取要求：
 1. 只提取**新出现的、重要的**信息（角色关系变化、重要事件、情感转折、承诺誓言等）
 2. 不要重复已有记忆中的内容
-3. 每条记忆用一句话概括，简洁明了
+3. 每条记忆用一段简短而生动的叙述描写，包含场景感（地点、氛围、关键动作/台词）
 4. 如果本轮对话没有值得长期记住的内容，返回空列表
+
+输出格式：
+请以 JSON 数组格式返回新记忆列表，例如：
+[
+  "信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang，银色的眼睛里闪烁着坚定：'我绝对不会丢下你的。'",
+  "图书馆二楼。Weiss和Blake因为战术分歧发生了激烈争执，气氛一度十分紧张。"
+]
+如果没有新记忆，返回 []
 
 已有记忆（供参考，避免重复）：
 {existing_memories}
 
 最近对话：
 {dialogue_text}
-
-请以 JSON 数组格式返回新记忆列表，例如：
-["Ruby 向 Yang 承诺永远不会丢下她", "Weiss 和 Blake 在图书馆发生了争执"]
-如果没有新记忆，返回 []
 """
 
                 kimi_config = get_llm_config("kimi")
@@ -431,7 +449,6 @@ class MemoryManager:
                             "source": "aura_summary",
                             "session_id": session_id,
                             "summarized_at": datetime.now().isoformat(),
-                            "position": 1.0
                         })
                     logger.info(f"[AURA→总结] Kimi 提取了 {len(new_memories)} 条新记忆")
                 else:

@@ -12,35 +12,63 @@
 
 > "即使世界忘了角色的誓言，AURA 也会替他们记住。"
 
-**给 RWBY 一个赛博老家。**
+**给 我心爱的角色 一个赛博老家。**
 
-AURA 不是再造 SillyTavern 或 Tavo，而是做 **ST/Tavo 与 LLM 之间的智能编排层 + 质量控制系统**。对客户端来说，AURA 就是一个"戴着面具的 DeepSeek"——暴露 OpenAI-compatible API，零改造接入。
+---
 
-**AURA 的本质定位：角色扮演专用的 API 网关 + 智能编排层。**
+### 💎 核心宣言
+
+> **AURA 不是"速度工具"，而是一个"Prompt 编译器"——将 TAVO 的混沌输入 + 用户的 RP 意图，编译成 DeepSeek/Qwen 能正确执行的指令，输出 Sonnet 级别的沉浸体验。**
+
+> **AURA 的终极形态不是"DeepSeek 的代理"，而是"Sonnet 的行为模拟器"——用 Prompt 工程 + 质量控制系统，让任何国产模型都能输出 Sonnet 级别的 RP 质量。**
+
+---
+
+### 用户愿意付出的代价
+
+对于重度 RP 用户来说：
+- ❌ 他们**不愿忍受** DeepSeek 用 0.5 秒吐出一段越权替他们写台词的回复
+- ✅ 他们**愿意等待** 30 秒让 Gemini 慢慢生成一个完美的情节点
+- ❌ 他们**不愿接受** API 运营商（OpenRouter 等）锁国区、封禁国内支付方式
+- ✅ 他们**愿意折腾** 配置 AURA，只要能获得稳定、高质量的 RP 体验
+
+**核心洞察**：这些用户宁愿多花钱也要用 Sonnet，不是因为 Sonnet 快，而是因为 Sonnet 准——它不越权、不抢戏、文风干净、沉浸感强。**AURA 要做的不是让用户更快地拿到回复，而是让 DeepSeek/Qwen  behave（行为）像 Sonnet。**
+
+---
+
+### AURA 的本质定位：角色扮演专用的 Prompt 编译器 + 模型行为校正引擎
 
 ```
-TAVO ──→ AURA（API 网关）
-              ├── 路由层 → DeepSeek / Kimi / Gemini / ...
-              ├── Prompt 优化层（拆解 + 9 区块重组）
-              ├── 记忆管理层（SQLite + FAISS RAG）
-              └── 质量控制层（两头约束 / StateManager / ...）
+TAVO ──→ AURA（Prompt 编译器）
+              ├── 输入层：拆解 TAVO 的混沌 Prompt（角色卡 + 长记忆 + 世界书 + 用户设定混杂）
+              ├── 编译层：模型方言编译器（DeepSeek/Qwen/Gemini 各自需要不同的指令格式）
+              ├── 记忆层：RAG 语义召回（替代全量注入，314条 → Top-5）
+              ├── 状态层：StateManager 强制注入（防止怀孕→生完→又怀孕）
+              ├── 质检层：生成后检测越权/长度/OOC，不通过则重写
+              └── 输出层：重组为标准化区块 Prompt + 模拟 SSE 流式返回
 ```
 
-用户只需在 TAVO 中配置一个 API 地址（AURA），所有流量都经过 AURA。AURA 内部负责模型切换、Prompt 优化、记忆管理、质量检测——用户无感知。
+用户只需在 TAVO 中配置一个 API 地址（AURA），所有流量都经过 AURA。AURA 内部负责：
+- **模型切换**：DeepSeek / Kimi / Gemini / Qwen / ...
+- **Prompt 编译**：将 TAVO 格式转换为各模型能理解的"方言"
+- **记忆管理**：SQLite + FAISS RAG，替代 TAVO 的全量记忆注入
+- **行为校正**：输出长度控制、越权检测、状态一致性校验
 
-### 核心策略：拆解 → 优化 → 重组
+**用户无感知，但体验质变。**
 
-AURA 的核心工作流程是 **"拆解 → 优化 → 重组"**：
+### 核心策略：拆解 → 编译 → 重组
+
+AURA 的核心工作流程是 **"拆解 → 编译 → 重组"**：
 
 1. **拆解**：将 TAVO 发送的原始 Prompt（System Prompt 中混杂了越权禁令、长记忆、角色卡、世界书、USER设定等）按格式标记拆解为结构化组件
-2. **优化**：对各组件分别应用优化策略（RAG压缩长记忆、增量注入约束指令、状态一致性校验等）
-3. **重组**：将优化后的组件重新组装为更精准、更高效的 Prompt 发送给 LLM
+2. **编译**：对各组件应用模型专属优化策略（DeepSeek 需要元角色伪装、Gemini 需要反抢戏指令、Qwen 需要特定格式约束），并叠加质量控制策略（RAG压缩、StateManager注入、两头约束等）
+3. **重组**：将编译后的组件重新组装为针对目标模型最优的 Prompt 发送给 LLM
 
 > 由于 TAVO 是闭源软件，无法在其输出中添加自定义字段，因此采用 **"格式拆解 + 区块重组"** 策略——通过硬解析识别 System Prompt 中的各区域边界，重组为 9 个标准化区块，并应用"两头约束"（开头 Priming + 结尾 Recency Effect）。
 
 ---
 
-## 二、12 个系统性痛点
+## 二、14 个系统性痛点
 
 宋作为重度 RP 用户，真金白银买来的真实体验：
 
@@ -48,16 +76,18 @@ AURA 的核心工作流程是 **"拆解 → 优化 → 重组"**：
 |---|------|------|------|
 | 1 | **越权输出** — 模型替 user 写台词/行动 | ✅ | — |
 | 2 | **文风污染** — 垃圾小说训练痕迹（臀腿腰胸） | — | Week 2 |
-| 3 | **输出结构模板化** — 模型形成固定写作八股（环境→动作→心理→对话），尤其Gemini明显 | — | Week 3 |
+| 3 | **文风固化** — 长时间同一模型锁死 | — | Week 3 |
 | 4 | **状态回退** — 怀孕→生完→又怀孕 | ✅ | — |
 | 5 | **RPG剧情回退** — 主线被带回过去 | — | Week 2 |
 | 6 | **内心独白泄露** — LLM像有读心术 | — | Week 3 |
 | 7 | **跨角色记忆隔离** — 私密话共享 | — | Week 3 |
-| 8 | **冲突消解过快** — A驳斥B，B直接认怂 | — | Week 3 |
-| 9 | **LLM维护官配** — 强行回归原作剧情 | — | Week 3 |
-| 10 | **关系称谓/身份漂移** — A是B亲妈，20轮后B叫A"姐姐"；剧情破裂后B仍叫"妈" | — | Week 3 |
-| 11 | **被动RAG导致默认行为矛盾** — 用户不提记忆，LLM按默认生成，与角色状态冲突 | — | Week 1（随StateManager） |
-| **12** | **模型输出长度失控** — DeepSeek太少剧情推不动，Gemini太多抢玩家戏 | — | Week 2 |
+| 8 | **RPG多角色状态记录缺失** — 长记忆只记 user 一人，party/NPC 状态变化全丢 | ✅ | — |
+| 9 | **重复记忆/冗余信息** — 同一批 NPC 信息被 LLM 反复记录，提示词无法根治 | ✅ | — |
+| 10 | **长记忆无 RAG，全量注入** — ST/Tavus 把全部 summary 塞进 system prompt，token 浪费 + 注意力稀释 | — | Week 2 |
+| 11 | **模型输出太少** — DeepSeek 输出过短，剧情推不下去 | — | Week 2 |
+| 12 | **模型输出太多** — Gemini 输出过长，经常自己推进剧情 | — | Week 2 |
+| 13 | **系统提示词锁不住** — 写了明确的 system prompt，LLM 仍会偏离人设 | — | Week 3 |
+| 14 | **时间维度缺失 → 已完成事件重复生成** — 长记忆无时间戳/时序标记，已完结剧情被反复重新生成 | — | Week 3 |
 
 ---
 
@@ -66,7 +96,8 @@ AURA 的核心工作流程是 **"拆解 → 优化 → 重组"**：
 | 层级 | 选型 | 说明 |
 |------|------|------|
 | API 网关 | FastAPI + Pydantic + Uvicorn | OpenAI-compatible `/v1/chat/completions` |
-| 模型层 | httpx 直连 | 多后端切换（DeepSeek/Kimi） |
+| 模型层 | httpx 直连 | 多后端切换（DeepSeek/Kimi/Gemini/Qwen） |
+| **Prompt 编译器** | **PromptDecomposer + ModelDialectCompiler** | **核心创新：将 TAVO 混沌输入编译为目标模型专属指令** |
 | 结构化存储 | SQLite（直接 sqlite3） | 原始对话、会话、dynamic_state、plot_anchors、关系边 |
 | 向量记忆 | FAISS（IndexFlatL2） | LLM API 生成 embedding（Kimi → DeepSeek 回退），时间加权 RAG |
 | 记忆总结 | Kimi API | 每 5 轮自动总结对话 → 提取新记忆 → 存入 FAISS |
@@ -78,13 +109,40 @@ AURA 的核心工作流程是 **"拆解 → 优化 → 重组"**：
 
 | 名词 | 干什么的 | 类比 |
 |------|---------|------|
-| **FastAPI** | Python Web 框架，写 API 接口 | 饭店前台，收客人订单、端菜回去 |
-| **Pydantic** | 数据格式校验工具 | 菜单模板，规定"菜名必须是字符串" |
-| **Uvicorn** | FastAPI 的运行服务器 | 饭店的电源开关，让服务跑起来 |
-| **httpx** | HTTP 客户端，请求 LLM API | 传菜员，把订单送到后厨 |
-| **FAISS** | 本地向量检索引擎，按"语义"检索记忆 | 图书馆管理员，你说"保护朋友"就找出相关情节 |
-| **SQLite** | 嵌入式数据库，存对话记录和元数据 | 账本，记下每轮对话的内容 |
-| **numpy** | 数值计算库，处理向量运算 | 计算器，算两个记忆的相似度 |
+| **PromptDecomposer** | TAVO Prompt 拆解器，将混沌输入拆为结构化组件 | 拆弹专家，把一堆缠在一起的线按颜色分开 |
+| **ModelDialectCompiler** | 模型方言编译器，针对不同 LLM 生成最优指令格式 | 翻译官，把同一句话翻译成 DeepSeek/Gemini/Qwen 各自的"方言" |
+
+### 模型方言编译器（ModelDialectCompiler）设计
+
+**核心问题**：同样的角色扮演指令，DeepSeek、Gemini、Qwen 的理解方式完全不同。
+- **DeepSeek**：需要"元角色伪装"（"你是一个专业 RPG 游戏主持人..."），直接说"不要越权"会被训练数据覆盖
+- **Gemini**：需要"反抢戏指令"（"严格跟随 user 提供的剧情线索，不要主动推进"），否则输出过长、自行推进剧情
+- **Qwen**：需要特定格式约束（XML 标签 + 严格结构），否则容易 OOC
+
+**编译策略**：
+```python
+class ModelDialectCompiler:
+    """模型方言编译器 — 将标准化 Prompt 编译为目标模型最优格式"""
+    
+    def compile(self, blocks: dict, target_model: str) -> str:
+        strategy = self._get_strategy(target_model)
+        # 1. 应用模型专属 priming（开头引导语）
+        # 2. 调整约束指令的表达方式（直接禁令 vs 元角色伪装 vs 格式约束）
+        # 3. 调整输出格式规范（JSON/XML/自然语言）
+        # 4. 调整记忆注入格式（列表/段落/时间线）
+        return strategy.assemble(blocks)
+```
+
+**模型策略矩阵**：
+
+| 模型 | Priming 风格 | 约束表达方式 | 记忆格式 | 输出规范 |
+|------|-------------|------------|---------|---------|
+| DeepSeek | 元角色伪装（"你是专业 TRPG 主持人"） | 间接约束（"你的职责是..."） | 时间线段落 | 自然语言 + 标记约定 |
+| Gemini | 直接指令（"遵循以下规则"） | 直接禁令 + 反例 | 结构化列表 | 长度限制 + 禁止推进 |
+| Qwen | XML 角色定义（`<character>...</character>`） | XML 约束标签 | XML 记忆块 | 严格 XML 输出 |
+| Kimi | 情境引导（"你正在主持一场..."） | 混合约束 | 自然语言段落 | 自由格式 |
+
+> **实现时机**：Day 3（LangGraph 状态机）或 Day 4（质量控制真实化）时实现 `ModelDialectCompiler` 类，与 `PromptDecomposer` + `ContextAssemble` 节点集成。
 
 ---
 
@@ -92,10 +150,10 @@ AURA 的核心工作流程是 **"拆解 → 优化 → 重组"**：
 
 | 周次 | 日期 | 主题 | 核心交付 |
 |------|------|------|---------|
-| **Week 1** | 4.30-5.5 | 核心骨架 + 端到端跑通 | FastAPI、双源角色卡、分层记忆、13节点状态机、LLM对接、50轮测试、Streamlit面板 |
-| **Week 2** | 5.6-5.11 | 质量控制层完整实现 | FormatGuard真实化、ContentFilter、StateManager完善、PlotAnchor、集成测试 |
-| **Week 3** | 5.12-5.18 | 深度优化 + 进阶特性 | StyleInjection、多模型切换、100轮调参、关系图谱优化、独白/隔离/冲突/官配 |
-| **Week 4** | 5.19-5.25 | 面试武器 | ARCHITECTURE.md、README、CSDN文章、面试话术、演示视频 |
+| **Week 1** | 4.30-5.5 | 核心骨架 + 端到端跑通 | FastAPI、PromptDecomposer、FAISS RAG 记忆层、14节点状态机、ModelDialectCompiler 初版、50轮测试、Streamlit面板 |
+| **Week 2** | 5.6-5.11 | 质量控制层 + 模型方言编译器首轮迭代 | FormatGuard真实化、ContentFilter、StateManager完善、PlotAnchor、**DeepSeek/Gemini/Qwen 方言策略验证**、集成测试 |
+| **Week 3** | 5.12-5.18 | 深度优化 + 模型方言编译器成熟 + 进阶特性 | StyleInjection、多模型切换 + 自动选择策略、**Prompt编译器闭环优化**、100轮调参、关系图谱优化、独白/隔离/冲突/官配 |
+| **Week 4** | 5.19-5.25 | 面试武器 | ARCHITECTURE.md（Prompt编译器架构）、README、**CSDN《Prompt编译器》**、面试话术、**"同一角色卡多模型对比"演示视频** |
 | **缓冲** | 5.26-5.31 | 面试前调整 | 修bug、调参、模拟面试 |
 
 ---
@@ -332,11 +390,16 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 7. **COT 自我校验指令**：实测发现开启 DeepSeek 思考模式后约束遵循效果显著提升，但思考模式会增加 1-3 秒延迟且需确认 API 兼容性。折中方案：在 System Prompt 的 `[OUTPUT_SPEC]` 区块末尾追加 5 步 COT 自我校验指令，让模型在输出前先逐项检查（越权/OOC/标记/长度），几乎无延迟增加。思考模式作为后续优化选项保留。
 
-8. **AURA 定位为"角色扮演专用 API 网关"**：最初计划开发独立软件，后改为 TAVO 与 LLM 之间的智能编排层。AURA 暴露 OpenAI-compatible API，TAVO 只需配置一个 API 地址，所有流量经过 AURA 处理。AURA 内部负责模型切换（DeepSeek/Gemini/Claude/Qwen）、Prompt 优化、记忆管理、质量检测——用户无感知。本质上是"给 API 前端套壳"，解决用户切换 API 时的记忆断裂问题。
+8. **AURA 定位演进 — 从"API 网关"到"Prompt 编译器 + Sonnet 行为模拟器"**：
+   - **最初定位**：角色扮演专用 API 网关，解决用户切换 API 时的记忆断裂问题
+   - **演进**：发现用户真正痛苦的不仅是"记忆断裂"，而是"国内模型输出质量远低于 Sonnet"——DeepSeek 越权、Gemini 抢戏、Qwen OOC
+   - **核心洞察**：重度 RP 用户愿意等待 30 秒换取完美回复，但绝不接受 0.5 秒的越权输出。他们花钱用 Sonnet 不是因为快，而是因为 Sonnet " behave 对"
+   - **最终定位**：AURA 不是"DeepSeek 的代理"，而是 **"Sonnet 的行为模拟器"**——用 Prompt 编译 + 质量控制，让任何国产模型都能输出 Sonnet 级别的 RP 沉浸体验
+   - **本质**：将 TAVO 的混沌输入编译成 DeepSeek/Qwen/Gemini 能正确执行的指令，输出 Sonnet 级质量
 
 9. **"RAG First, FormatGuard Later" 策略**：分析发现长记忆占 Prompt 的 66%（20,000/30,511 字符），大量冗余记忆是越权输出的根本诱因。决定先实现 Day 2 的 RAG 记忆压缩（314 条 → Top-5），观察效果后再实现 FormatGuard。预期 RAG 压缩后越权率下降 50-60%，FormatGuard 只需处理剩余问题。
 
-10. **时间加权 RAG 公式**：TAVO 的长记忆没有时间戳，但位置隐含时间顺序（开头的发生在前，后面的发生在后）。设计时间加权公式 `final_score = semantic × 0.6 + time_weight × 0.4`，其中 `time_weight = position`（0.0=最早, 1.0=最新），确保最新记忆在检索中占优势。
+10. **时间加权 RAG 公式**：TAVO 的长记忆没有时间戳，但位置隐含时间顺序（开头的发生在前，后面的发生在后）。设计时间加权公式 `final_score = semantic × 0.6 + time_weight × 0.4`，其中 `time_weight = (insert_seq / max_seq)^γ`（γ=1.5 默认），确保最新记忆在检索中占优势。使用 `insert_seq` 绝对序列号而非归一化 `position`，避免增量更新时的全量重刷问题。
 
 11. **AURA 自建记忆数据库（替代依赖 TAVO）**：TAVO 的长记忆生成存在根本问题——无上下文总结、重复严重、质量不可控。决定 AURA 自建 SQLite + Chroma 数据库，从 TAVO 已有记忆作为"初始种子"导入，后续由 AURA 接管记忆的总结、存储、召回全流程。每 5 轮调用 LLM 总结一次，新记忆存入 Chroma。
 
@@ -364,7 +427,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ### Day 2｜AURA 自建记忆数据库 + RAG 召回 ✅
 
-**目标**：AURA 接管记忆管理，从 TAVO 的 System Prompt 中拆解已有记忆导入 FAISS，后续每轮对话由 AURA 自己总结 + 存储 + RAG 召回。解决痛点 11（被动RAG矛盾），显著缓解痛点 1/4/5/7/10/12。
+**目标**：AURA 自建 FAISS 记忆库，只存储 AURA 自己总结的记忆；TAVO 的 System Prompt 长记忆保留在原有区块中自然透传。后续每轮对话由 AURA 自己总结 + 存储 + RAG 召回。解决痛点 10（长记忆无 RAG，全量注入），显著缓解痛点 1/4/5/7/8/11/12。
 
 #### 背景：为什么 AURA 要自建记忆数据库
 
@@ -402,7 +465,7 @@ CREATE TABLE sessions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 动态状态（痛点4）
+-- 动态状态（痛点 4）
 CREATE TABLE dynamic_state (
     session_id TEXT NOT NULL,
     entity_name TEXT NOT NULL,    -- 角色/物品名
@@ -411,7 +474,7 @@ CREATE TABLE dynamic_state (
     PRIMARY KEY (session_id, entity_name)
 );
 
--- 剧情锚点（痛点5）
+-- 剧情锚点（痛点 5）
 CREATE TABLE plot_anchors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
@@ -421,7 +484,7 @@ CREATE TABLE plot_anchors (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 关系图谱（痛点10）
+-- 关系图谱（痛点 8）
 CREATE TABLE relationship_graph (
     session_id TEXT NOT NULL,
     source TEXT NOT NULL,
@@ -458,16 +521,32 @@ async def _get_embedding(self, text: str) -> List[float]:
             return response["data"][0]["embedding"]
         except:
             continue
-    # 都不可用时返回零向量（降级）
+    # 都不可用时返回零向量（语义排序退化为纯时间排序，不阻断流程）
     return [0.0] * self._dimension
 ```
 
-**记忆导入（首次启动）**：
-1. 从 TAVO System Prompt 的 `=====长记忆=====` 区域拆解出记忆列表
-2. 每条记忆附带 metadata：`{index, position, source="tavo_import"}`
-3. `position = index / total_count`（0.0=最早, 1.0=最新）
-4. 逐条生成 embedding 并添加到 FAISS IndexFlatL2
-5. 每 10 条保存一次进度到磁盘
+**记忆存储策略：AURA 自建记忆，不导入 TAVO**
+
+> 经过讨论确认：**FAISS 只存储 AURA 自己总结的记忆，不导入 TAVO 的长记忆。**
+>
+> 原因：TAVO 长记忆是"无时间戳的混合时间包"，可能包含 AURA 接管前后的混合内容，无法精确确定每条记忆在真实时间线上的位置。硬塞进去会导致时序错乱（TAVO 较新的记忆被排在 AURA 旧记忆之前，或反之）。
+>
+> TAVO 长记忆保留在其 System Prompt 的 `=====长记忆=====` 区块中，随 TAVO 的 prompt 自然透传给 LLM；AURA 的 FAISS 只负责存储和召回 AURA 自己提炼的增量记忆。
+
+**记忆写入链路**：
+1. 每 5 轮对话后，调用 Kimi 总结最近 10 轮对话
+2. Kimi 输出**叙述化场景描写**（非干瘪 bullet），例如：
+   ```json
+   ["信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang，银色的眼睛里闪烁着坚定：'我绝对不会丢下你的。'"]
+   ```
+3. 总结出的新记忆经去重后，向量化存入 FAISS
+4. metadata 附带 `insert_seq`（单调递增全局序列号，0, 1, 2...），**写入后永不修改**
+5. 自动保存到磁盘（`faiss_index.bin` + `faiss_meta.json`），服务重启后自动恢复 `_next_seq`
+
+> ⚠️ **关键设计：为什么用 `insert_seq` + 动态归一化，而非 `position = index / total_count`**
+> - 如果用 `position = index / total_count`，增量追加新记忆时 `total_count` 增大，所有旧记忆的 `position` 会被被动稀释
+> - 例：314 条时第 313 条 `position=313/314=0.997`，追加到 315 条后变成 `313/315=0.994`，时间语义错乱
+> - **解决：存储绝对序列号 `insert_seq`，召回时基于当前全量数据现场动态归一化**
 
 **每轮 RAG 召回（时间加权）**：
 ```python
@@ -478,26 +557,39 @@ async def search(self, query: str, top_k: int = 5) -> List[str]:
     k = min(top_k * 2, len(self.documents))
     distances, indices = self.index.search(query_array, k)
     
-    # 时间加权排序
+    # 动态时间归一化：基于当前全量数据的 insert_seq 范围
+    all_seqs = [m.get("insert_seq", 0) for m in self.metadatas]
+    min_seq = min(all_seqs)
+    max_seq = max(all_seqs)
+    seq_range = max(max_seq - min_seq, 1)
+    
+    gamma = settings.rag_time_gamma          # 默认 1.5
+    semantic_weight = settings.rag_semantic_weight  # 默认 0.6
+    time_weight_base = 1.0 - semantic_weight
+    
     scored = []
     for i, idx in enumerate(indices[0]):
         semantic = 1.0 / (1.0 + distances[0][i])  # L2 → similarity
-        position = self.metadatas[idx].get('position', 0.5)
-        final_score = semantic * 0.6 + position * 0.4
-        scored.append((final_score, self.documents[idx]))
+        seq = self.metadatas[idx].get('insert_seq', min_seq)
+        # 动态归一化 + 幂次增强（γ）
+        normalized = (seq - min_seq) / seq_range
+        time_weight = normalized ** gamma
+        final_score = semantic * semantic_weight + time_weight * time_weight_base
+        scored.append((final_score, idx))
     
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [doc for score, doc in scored[:top_k]]
+    return [self.documents[idx] for score, idx in scored[:top_k]]
 ```
 
-**增量更新（每轮对话后）**：
-1. 每 5 轮调用 Kimi 总结一次（AURA 自己的优化 prompt，带已有记忆上下文防重复）
-2. 新记忆向量化后存入 FAISS，`position` 设为 1.0（最新）
-3. 自动保存到磁盘（`faiss_index.bin` + `faiss_meta.json`）
+> **幂次 γ 的语义**：
+> - γ=1.0：线性，新旧记忆权重差异均匀
+> - γ=1.5（默认）：温和增强，较新记忆权重略高，旧记忆不会被断崖式抛弃
+> - γ=2.0：强烈增强，只有最新 1/4 记忆权重超过 0.5
+> - γ<1.0：反向增强，旧记忆权重更高（一般不推荐）
 
-**降级策略**：
-- FAISS 不可用 → 回退到全量注入
-- Embedding API 不可用 → 使用零向量（语义排序退化为时间排序）
+**失败策略（无降级）**：
+- `import faiss` 直接放顶部，装不上就启动失败，逼你把环境搞对
+- Embedding API 全挂时返回零向量（语义排序退化为纯时间排序，不阻断流程）
 - Kimi 未配置 → 跳过自动总结，不影响主流程
 
 #### 晚上：MemoryManager 封装 + 接入转发流程
@@ -507,20 +599,28 @@ async def search(self, query: str, top_k: int = 5) -> List[str]:
 class MemoryManager:
     """统一记忆管理接口 — 使用 FAISS 做向量检索"""
     
+    def __init__(self):
+        """
+        核心状态：
+        - _next_seq: 单调递增序列号，AURA 生成记忆的时间代理
+        - _dimension: 768（默认向量维度）
+        - documents/metadatas: 与 FAISS 索引对应的文档和元数据列表
+        """
+    
     async def initialize(self):
-        """初始化：创建 SQLite 表 + 加载 FAISS 索引"""
+        """初始化：创建 SQLite 表 + 加载 FAISS 索引 + 恢复 _next_seq"""
     
     async def import_from_tavo(self, memories: List[str]):
-        """从 TAVO System Prompt 导入已有记忆到 FAISS"""
+        """从 TAVO System Prompt 导入已有记忆到 FAISS（保留接口，按需调用）"""
     
     async def search(self, query: str, top_k: int = 5) -> List[str]:
-        """时间加权 RAG 召回"""
+        """语义检索 → 时间加权重排（动态归一化 + 幂次增强 + 可配置权重）"""
     
-    async def add_memory(self, text: str, metadata: dict):
-        """新增单条记忆到 FAISS"""
+    async def add_memory(self, text: str, metadata: Optional[dict] = None):
+        """新增单条记忆到 FAISS，自动分配单调 insert_seq"""
     
     async def summarize_and_store(self, session_id: str, recent_dialogues: List[dict]):
-        """调用 Kimi 总结最近对话 → 提取新记忆 → 存入 FAISS"""
+        """调用 Kimi 总结最近对话 → 提取叙述化记忆 → 存入 FAISS"""
     
     async def get_recent_messages(self, session_id: str, n: int = 20) -> List[dict]:
         """从 SQLite 读取最近 N 轮对话"""
@@ -535,52 +635,52 @@ class MemoryManager:
 **接入 completions_simple.py 转发流程**：
 ```
 TAVO 请求 → 拆解 System Prompt
-  → 提取 TAVO 的长记忆列表
-  → 对比 AURA 数据库，检测新增记忆
-  → FAISS 时间加权召回 Top-5
+  → FAISS 时间加权召回 Top-5（以当前用户输入为 query）
   → 注入 [LONG_TERM_MEMORY] 区块（仅 Top-5，非全量）
   → 区块重组 → 转发 LLM
   → LLM 返回后，保存本轮对话到 SQLite
   → 每 5 轮调用 Kimi 总结一次（异步，不阻塞）
+  → 新记忆向量化存入 FAISS
 ```
 
 **🎯 验收标准**：
-1. 首次启动：从 TAVO System Prompt 导入记忆到 FAISS ✅
-2. RAG 召回：根据关键词召回 Top-3，结果中包含相关记忆 ✅
-3. 时间加权：最新记忆的排序高于早期记忆 ✅
-4. 增量更新：新对话产生后，Kimi 总结出新记忆并存入 FAISS ✅
-5. 降级：FAISS/Embedding 不可用时，回退到全量注入 ✅
-6. 持久化：服务重启后 FAISS 索引自动加载 ✅
-7. Prompt 变化：`[LONG_TERM_MEMORY]` 从全量（~20,000 字符）→ Top-5（~300 字符）✅
+1. RAG 召回：根据用户输入语义召回 Top-5，结果中包含相关记忆 ✅
+2. 时间加权：最新记忆的排序高于早期记忆（γ=1.5） ✅
+3. 增量更新：新对话产生后，Kimi 总结出叙述化记忆并存入 FAISS ✅
+4. 硬失败：FAISS 初始化失败直接抛异常，不降级 ✅
+5. 持久化：服务重启后 FAISS 索引 + _next_seq 自动恢复 ✅
+6. Prompt 变化：`[LONG_TERM_MEMORY]` 从全量（~20,000 字符）→ Top-5（~300 字符）✅
 
 ---
 
-### RAG 记忆压缩对 12 个痛点的影响分析 ✅
+### RAG 记忆压缩对 14 个痛点的影响分析 ✅
 
-在实现 Day 2 的 RAG 记忆压缩（长记忆从 314 条全量 → Top-5 语义召回）后，对 12 个痛点的预期影响如下：
+在实现 Day 2 的 RAG 记忆压缩（长记忆从 314 条全量 → Top-5 语义召回）后，对 14 个痛点的预期影响如下：
 
 | # | 痛点 | RAG 影响 | 说明 |
 |---|------|---------|------|
 | 1 | **越权输出** | ✅ **显著缓解** | 长记忆从 20,000 字符压缩到 ~300 字符，Prompt 噪声大幅减少，LLM 混淆角色边界的概率降低。预期越权率下降 50-60% |
 | 2 | **文风污染** | ❌ 无影响 | 文风污染是 LLM 训练数据问题，与记忆长度无关 |
-| 3 | **输出结构模板化** | ❌ 无影响 | 输出结构是 LLM 生成策略问题，与记忆长度无关 |
+| 3 | **文风固化** | ❌ 无影响 | 模型锁死是模型选择问题，与记忆长度无关 |
 | 4 | **状态回退** | ✅ **部分缓解** | RAG 召回相关记忆后，LLM 更容易记住当前状态。但状态回退的根本解决依赖 StateManager 的强制注入 |
 | 5 | **RPG剧情回退** | ✅ **部分缓解** | PlotAnchor 强制注入 + RAG 召回主线事件，减少剧情丢失。但 PlotAnchor 的完整实现依赖 Day 4 |
 | 6 | **内心独白泄露** | ⚠️ 间接缓解 | 记忆噪声减少后，LLM 对"用户心理活动"和"角色心理活动"的边界更清晰。但根本解决依赖 Week 3 的 visibility 三层隔离 |
 | 7 | **跨角色记忆隔离** | ❌ 无影响 | 这是 Week 3 的专门任务，与记忆长度无关 |
-| 8 | **冲突消解过快** | ⚠️ 间接缓解 | 精简后的 Prompt 让 LLM 更聚焦当前场景，减少"和稀泥"倾向。但根本解决依赖 Week 3 的 conflict_heat 机制 |
-| 9 | **LLM维护官配** | ❌ 无影响 | 官配回归是 LLM 训练数据 bias，与记忆长度无关 |
-| 10 | **关系称谓/身份漂移** | ✅ **部分缓解** | RAG 召回包含关系信息的记忆后，LLM 更可能记住正确称谓。但根本解决依赖 Week 3 的 identity_label 动态称谓 |
-| 11 | **被动RAG默认行为** | ✅ **根本解决** | 这是 RAG 的直接目标——主动召回相关记忆替代 LLM 的默认生成 |
-| 12 | **输出长度失控** | ⚠️ 间接缓解 | Prompt 精简后，LLM 的 token 预算分配更合理。但根本解决依赖 Week 2 的 ResponseLengthGuard |
+| 8 | **RPG多角色状态记录缺失** | ✅ **部分缓解** | RAG 召回包含 party/NPC 状态变化的记忆后，多角色状态更容易保留。但根本解决依赖 Week 3 的动态状态追踪 |
+| 9 | **重复记忆/冗余信息** | ✅ **根本解决** | RAG 语义召回替代全量注入，从根本上避免同一批 NPC 信息反复塞进 Prompt |
+| 10 | **长记忆无 RAG，全量注入** | ✅ **根本解决** | 这是 RAG 的直接目标——主动召回 Top-5 替代全量 summary 注入 |
+| 11 | **模型输出太少** | ⚠️ 间接缓解 | Prompt 精简后，LLM 的 token 预算分配更合理，可能增加输出。但根本解决依赖 Week 2 的 ResponseLengthGuard |
+| 12 | **模型输出太多** | ⚠️ 间接缓解 | Prompt 精简后，LLM 更聚焦当前场景，减少无关输出。但根本解决依赖 Week 2 的 ResponseLengthGuard |
+| 13 | **系统提示词锁不住** | ❌ 无影响 | System prompt 遵循度是模型对齐问题，与记忆长度无关 |
+| 14 | **时间维度缺失 → 已完成事件重复生成** | ⚠️ 部分缓解 | FAISS 时间加权 `position` 让最新记忆优先召回，但精确时间戳和时序标记仍需 Week 3 完善 |
 
-**总结**：RAG 记忆压缩可以**解决/缓解 7 个痛点**（1, 4, 5, 6, 8, 10, 11），其中痛点 11 是根本解决，痛点 1 是显著缓解。剩余 5 个痛点（2, 3, 7, 9, 12）需要 Week 2-3 的专门质量控制层来处理。
+**总结**：RAG 记忆压缩可以**解决/缓解 8 个痛点**（1, 4, 5, 6, 8, 9, 10, 14），其中痛点 9/10 是根本解决，痛点 1 是显著缓解。剩余 6 个痛点（2, 3, 7, 11, 12, 13）需要 Week 2-3 的专门质量控制层来处理。
 
 ---
 
-### Day 3｜LangGraph 核心状态机
+### Day 3｜LangGraph 核心状态机 + 模型方言编译器
 
-**目标**：13节点状态图跑通，支持循环回退，状态持久化，有可视化。
+**目标**：13节点状态图跑通，支持循环回退，状态持久化，有可视化。**核心新增：模型方言编译器（ModelDialectCompiler）节点，将标准化区块编译为目标模型专属指令。**
 
 #### 上午：状态图设计
 节点（执行顺序）：
@@ -590,33 +690,62 @@ TAVO 请求 → 拆解 System Prompt
 4. **MemoryRetrieve** — 检索：工作记忆+情节记忆+主线锚点（mock）
 5. **StateManager** — 加载dynamic_state注入prompt（痛点4骨架）
 6. **StyleInjection** — 结构随机化 + mes_example多样化，打破输出模板化（mock）
-7. **ContextAssemble** — 组装：人设+动态状态+主线锚点+唤醒记忆+工作记忆+风格约束
-8. **LLMGenerate** — 调用LLM（mock）
-9. **FormatGuard** — 越权输出检测（痛点1骨架）
-10. **OOCCheck** — 人设一致性（mock）
-11. **ContentFilter** — 文风污染过滤（mock）
-12. **OutputReturn** — 返回客户端
-13. **MemoryExtract** — 提取事件+状态变更，更新记忆库（mock）
+7. **ModelDialectCompiler** — **模型方言编译器（核心新增）**：将标准化区块 Prompt 编译为目标模型（DeepSeek/Gemini/Qwen）的最优指令格式
+8. **ContextAssemble** — 组装：人设+动态状态+主线锚点+唤醒记忆+工作记忆+风格约束+**模型专属编译后指令**
+9. **LLMGenerate** — 调用LLM（mock）
+10. **FormatGuard** — 越权输出检测（痛点1骨架）
+11. **OOCCheck** — 人设一致性（mock）
+12. **ContentFilter** — 文风污染过滤（mock）
+13. **OutputReturn** — 返回客户端
+14. **MemoryExtract** — 提取事件+状态变更，更新记忆库（mock）
 
 边（条件）：
 - FormatGuard/OOCCheck/ContentFilter通过 → OutputReturn → MemoryExtract → 结束
-- 任一不通过 → ContextAssemble（加约束标记）→ LLMGenerate（retry_count+1，最多2次）
+- 任一不通过 → **ModelDialectCompiler（加约束标记 + 调整编译策略）** → LLMGenerate（retry_count+1，最多2次）
+
+#### 模型方言编译器节点详细设计
+
+**输入**：标准化 9 区块（`[PROTOCOL]`, `[CONSTRAINTS]`, `[CHARACTER_CARD]`, `[DYNAMIC_STATE]`, `[WORKING_MEMORY]`, `[RAG_EPISODIC]`, `[WORLD_CONTEXT]`, `[OUTPUT_SPEC]`）
+**输出**：针对目标模型的重组后 Prompt 字符串
+
+**编译流程**：
+```
+标准化区块
+  → 选择模型策略（DeepSeek/Gemini/Qwen/...）
+  → 应用 Priming（模型专属开头引导语）
+  → 转换约束表达方式（直接禁令 vs 元角色伪装 vs XML 标签）
+  → 转换记忆注入格式（时间线 vs 列表 vs XML 块）
+  → 追加输出规范（长度限制/反抢戏/格式标记）
+  → 输出最终 Prompt
+```
+
+**Retry 时的编译策略调整**：
+- 第1次生成后若 FormatGuard 失败 → 在 `[CONSTRAINTS]` 中追加更强约束 + 切换为元角色伪装风格
+- 第2次生成后若仍失败 → 在 `[OUTPUT_SPEC]` 中追加"逐条自检"COT指令 + 缩短输出长度限制
+
+> **关键决策 — 流式传输架构调整**：由于流式传输的"不可撤回"特性（已发送到 TAVO 的内容无法收回），AURA 采用 **"先完整生成 → 质检 → 再流式返回"** 策略：
+> - LLM 请求使用非流式模式（或 AURA 内部聚合流式响应）
+> - FormatGuard/OOCCheck/ContentFilter 在完整响应上执行
+> - 通过后，将完整响应切割为 SSE chunk 模拟流式返回给 TAVO
+> - 用户感知到的是"稍慢但完美的回复"，而非"快速但越权的回复"
+> - **对于重度 RP 用户，10-30 秒的等待换取 Sonnet 级别的沉浸体验，是完全可接受的**
 
 #### 下午：LangGraph实现
-1. `AgentState` TypedDict：`messages, character, session_id, memory_decision, retrieved_memories, dynamic_state, ooc_passed, format_passed, content_passed, retry_count`
-2. `StateGraph`定义13节点和条件边
+1. `AgentState` TypedDict：`messages, character, session_id, memory_decision, retrieved_memories, dynamic_state, ooc_passed, format_passed, content_passed, retry_count, target_model, dialect_strategy`
+2. `StateGraph`定义14节点和条件边（含 ModelDialectCompiler）
 3. `checkpointer`：`MemorySaver`或`RedisSaver`
 4. 编译：`app = workflow.compile()`
 
 #### 晚上：接口打通 + 日志 + 可视化
 1. FastAPI调用LangGraph，`thread_id=session_id`
-2. structlog每节点打印：名称、耗时、状态摘要
+2. structlog每节点打印：名称、耗时、状态摘要、**模型方言策略**
 3. mermaid状态图：`docs/state_diagram.md`
 
 **🎯 验收标准**：
-- curl发消息，日志显示完整链路：`InputReceive → ... → OutputReturn`
+- curl发消息，日志显示完整链路：`InputReceive → ... → ModelDialectCompiler → ... → OutputReturn`
 - 同session_id发第二条，状态延续（thread_id正确）
 - `docs/state_diagram.md`有mermaid图
+- **模型方言编译验证**：分别用 DeepSeek / Gemini / Qwen 发送相同请求，验证生成的 Prompt 结构不同（Priming 风格、约束表达方式、输出规范均有差异）
 
 ---
 
@@ -663,17 +792,17 @@ TAVO 请求 → 拆解 System Prompt
 
 #### 晚上：质量控制（痛点1 FormatGuard + 痛点3 StyleInjection + 痛点4 StateManager）
 
-**FormatGuard（痛点1-越权输出）— 待 RAG 完成后评估**：
+**FormatGuard（痛点1-越权输出）— 模型行为校正的核心组件**：
 
 FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**：
 
 1. **先做 Day 2 RAG 记忆压缩**：长记忆从 314 条全量（~20,000 字符）→ Top-5 语义召回（~300 字符），Prompt 从 30,511 精简到 ~10,000 字符
-2. **观察效果**：如果 RAG 压缩后越权问题自然缓解（预期下降 50-60%），则 FormatGuard 可能不需要实现
-3. **再评估**：如果仍有剩余越权问题，再根据实际表现设计针对性方案
+2. **观察效果**：RAG 压缩后越权问题可能自然缓解（预期下降 50-60%）
+3. **再评估**：即使 RAG 缓解了越权，**FormatGuard 仍有核心价值**——因为不同模型的越权模式不同（DeepSeek 喜欢替 user 写台词，Gemini 喜欢抢戏推进剧情），FormatGuard + ModelDialectCompiler 的闭环校正才是"Sonnet 行为模拟"的完整方案
 
-> 详细的三层 FormatGuard 设计（正则 Layer 1 + 语义 Layer 2 + Agent Layer 3）已在讨论中完成方案设计，但暂不写入执行计划。等 RAG 落地后评估是否需要。
+> **架构调整**：由于流式传输无法撤回已发送内容，AURA 采用 **"先完整生成 → 质检 → 再模拟流式返回"** 策略。FormatGuard 在完整响应上执行，不通过后触发 ModelDialectCompiler 调整策略并重写。用户感知到的是"稍慢但完美的回复"。
 
-**StyleInjection真实化**（痛点3-输出结构模板化）：
+**StyleInjection真实化**（痛点3-文风固化中的输出结构模板化）：
 - **结构随机化**：在 ContextAssemble 中随机选择输出结构指令注入 prompt
   ```python
   structures = [
@@ -688,7 +817,7 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 - **mes_example 多样化**：存放结构不同的例句（对话开头/动作开头/心理开头/倒叙），而非固定几条"写得好"的
 - **历史结构检测**：检测最近 N 轮输出是否都以相同模式开头（如环境描写），是则强制切换结构指令
 
-**StateManager真实化**（痛点4-状态回退 + 痛点11-被动RAG默认行为）：
+**StateManager真实化**（痛点4-状态回退 + 痛点10-长记忆无RAG）：
 - MemoryExtract检测`state_changes`（如`{"Yang.status":"已生产"}`）
 - 自动`update_dynamic_state`
 - **ContextAssemble强制注入dynamic_state（最高优先级，不裁剪）—— 每轮必注，不是用户问了才查**
@@ -709,11 +838,15 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 
 **目标**：真刀真枪跑起来，50轮验证记忆连贯，能可视化观察Agent决策。
 
-#### 上午：LLM对接
+#### 上午：LLM对接 + 模型方言编译器验证
 1. `app/config.py`：`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
 2. LLMGenerate节点接入LangChain `ChatOpenAI`（兼容任意OpenAI格式端点）
 3. 先接便宜模型跑通（DeepSeek-V3 / GLM-4 / Gemini-1.5-Flash）
-4. 支持SSE流式返回
+4. **模型方言编译器初版实现**：`app/compiler/model_dialect.py`
+   - `ModelDialectCompiler` 基类 + `DeepSeekStrategy` / `GeminiStrategy` / `QwenStrategy` 子类
+   - 每种策略实现 `apply_priming()`、`translate_constraints()`、`format_memories()`、`specify_output()`
+5. **支持SSE流式返回**：内部非流式生成 → 质检 → 切割为 SSE chunk 模拟流式
+   - 若质检失败 → 触发 retry → ModelDialectCompiler 调整策略参数 → 重新生成
 
 #### 下午：50轮长对话测试 + Tavo兼容
 1. RWBY角色卡启动session
@@ -734,32 +867,35 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
    - plot_anchors列表
    - NetworkX关系图可视化
    - FormatGuard/OOC/Content检测日志表格
+   - **模型方言编译器可视化**：当前目标模型、使用的编译策略、各区块的转换前后对比
 2. `ARCHITECTURE.md`初稿：
    - 项目背景（你的痛点故事）
-   - 分层架构图
-   - 13节点数据流
-   - 关键算法（混合检索公式、唤醒决策规则、状态变更检测）
+   - **核心定位：Prompt 编译器 + Sonnet 行为模拟器**
+   - **Prompt 编译器架构图**：输入层 → 编译层 → 输出层
+   - 14节点数据流（含 ModelDialectCompiler）
+   - 关键算法（混合检索公式、唤醒决策规则、状态变更检测、模型方言编译策略矩阵）
 
 **🎯 验收标准**：
 - `curl`或Tavo → AURA → 真实LLM → 返回，完整链路通
 - 50轮后，第45轮Agent仍能唤醒第5轮事件（检查日志）
 - Streamlit面板能看记忆唤醒过程
-- `ARCHITECTURE.md`有初稿
-- **GitHub commit**：`git commit -m "Week 1: skeleton + FormatGuard + StateManager"`
+- **Streamlit面板能查看模型方言编译器状态（当前模型 + 编译策略）**
+- `ARCHITECTURE.md`有初稿，核心定位清晰
+- **GitHub commit**：`git commit -m "Week 1: skeleton + FormatGuard + StateManager + ModelDialectCompiler"`
 
 ---
 
-## 六、Week 2｜质量控制层完整实现（5.6-5.11）
+## 六、Week 2｜质量控制层 + 模型方言编译器迭代（5.6-5.11）
 
-**目标**：痛点1/2/4/5全部真实化，集成测试通过。
+**目标**：痛点1/2/4/5/11/12全部真实化，**模型方言编译器（ModelDialectCompiler）完成首轮迭代**，集成测试通过。
 
 | 日期 | 任务 | 验收 |
 |------|------|------|
-| **5.6** | FormatGuard完整实现 | 10+种越权样本，拦截率>95%，触发回退重写 |
-| **5.7** | ContentFilter + ResponseLengthGuard（痛点2+12） | 黑名单拦截；模型专属长度/节奏配置（DeepSeek/Gemini适配） |
-| **5.8** | StateManager完善（痛点4） | 状态变更LLM提取准确率>80%；冲突检测工作；100轮不回退 |
-| **5.9** | PlotAnchor完整实现（痛点5） | 主线事件强制注入；检索优先级正确；旧锚点降级逻辑 |
-| **5.10-11** | 集成测试 | RWBY卡100轮测试；所有质量检测节点工作；metrics记录 |
+| **5.6** | FormatGuard完整实现 + **DeepSeek 方言策略调优** | 10+种越权样本，拦截率>95%，触发回退重写；**DeepSeek 元角色伪装策略验证有效** |
+| **5.7** | ContentFilter + ResponseLengthGuard（痛点2+11+12）+ **Gemini 反抢戏策略** | 黑名单拦截；模型专属长度/节奏配置（DeepSeek/Gemini适配）；**Gemini "严格跟随 user 线索，不主动推进"策略验证** |
+| **5.8** | StateManager完善（痛点4）+ **Qwen XML 格式约束** | 状态变更LLM提取准确率>80%；冲突检测工作；100轮不回退；**Qwen `<character>` + `<constraints>` XML 标签格式验证** |
+| **5.9** | PlotAnchor完整实现（痛点5）+ **方言策略 A/B 测试框架** | 主线事件强制注入；检索优先级正确；旧锚点降级逻辑；**同一角色卡用不同模型跑 20 轮，对比输出质量** |
+| **5.10-11** | 集成测试 + **模型行为对比报告** | RWBY卡100轮测试；所有质量检测节点工作；metrics记录；**产出 DeepSeek vs Gemini vs Qwen 行为差异矩阵** |
 
 **🎯 Week 2 总验收**：
 - 跑100轮RWBY对话
@@ -769,20 +905,21 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 - 状态变更检测准确率>80%
 - PlotAnchor主线不丢失
 - 记录拦截次数、回退次数、唤醒准确率
+- **模型方言编译器**：DeepSeek/Gemini/Qwen 三种策略均有验证数据，能根据目标模型自动选择最优编译策略
 
 ---
 
-## 七、Week 3｜深度优化 + 进阶特性（5.12-5.18）
+## 七、Week 3｜深度优化 + 模型方言编译器成熟 + 进阶特性（5.12-5.18）
 
-**目标**：从"能用"到"好用"，解决痛点3/6/7/8/9。
+**目标**：从"能用"到"好用"，解决痛点3/6/7/13/14，**模型方言编译器（ModelDialectCompiler）达到生产级可用**，以及冲突消解、官配回归、身份漂移等问题。
 
 | 日期 | 任务 | 验收 |
 |------|------|------|
-| **5.12-13** | StyleInjection（痛点3-输出结构模板化） | 结构随机化 + mes_example多样化 + 历史结构检测，打破模型固定写作八股 |
-| **5.14** | 多模型切换 | 配置支持多后端key；生成/提取分离；可选模型轮询 |
-| **5.15-16** | 100轮调参 | 混合检索权重调优；唤醒阈值调优；token预算分配优化 |
-| **5.17** | 关系图谱优化 | 不同relation_type不同更新速率；冲突不对称性 |
-| **5.18** | 独白/隔离/冲突/官配/称谓（痛点6/7/8/9/10） | internal_thoughts表；visibility三层；conflict_heat；官配覆盖canonical；identity_label动态称谓 |
+| **5.12-13** | StyleInjection（痛点3-文风固化中的输出结构模板化）+ **模型专属风格指令** | 结构随机化 + mes_example多样化 + 历史结构检测；**DeepSeek/Gemini/Qwen 各自的风格约束指令调优** |
+| **5.14** | 多模型切换 + **自动模型选择策略** | 配置支持多后端key；生成/提取分离；可选模型轮询；**根据角色卡复杂度 + 用户偏好自动推荐最优模型** |
+| **5.15-16** | 100轮调参 + **Prompt 编译器自动优化** | 混合检索权重调优；唤醒阈值调优；token预算分配优化；**根据质检结果（FormatGuard/OOCCheck）自动调整编译策略参数** |
+| **5.17** | 关系图谱优化 + **模型对关系边理解的差异补偿** | 不同relation_type不同更新速率；冲突不对称性；**Gemini 容易忽略隐性关系边 → 编译时显性化注入** |
+| **5.18** | 独白/隔离/冲突/官配/称谓（痛点6/7，及冲突消解、官配回归、身份漂移）+ **Sonnet 行为模拟器最终验证** | internal_thoughts表；visibility三层；conflict_heat；官配覆盖canonical；identity_label动态称谓；**同一复杂场景用 DeepSeek+Qwen+Gemini 分别跑，输出质量接近 Sonnet 基准** |
 
 **🎯 Week 3 总验收**：
 - 100轮测试，输出结构多样化（对比Week 1，不再每轮都是"环境→动作→心理→对话"的固定模板）
@@ -790,6 +927,11 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 - 跨角色私密隔离（对A说的B不知道）
 - 冲突张力维持（被驳斥方不直接认怂）
 - 官配不强行回归（Pyrrha-User线稳定）
+- **模型方言编译器**：
+  - DeepSeek 越权率 < 5%（接近 Sonnet 水平）
+  - Gemini 抢戏率 < 5%（输出严格跟随 user 输入）
+  - Qwen OOC 率 < 5%（人设一致性稳定）
+  - 编译策略参数可根据质检反馈自动调整（闭环优化）
 
 ---
 
@@ -797,18 +939,18 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 
 | 日期 | 任务 | 验收 |
 |------|------|------|
-| **5.19** | ARCHITECTURE.md定稿 | 完整架构文档，可直接贴简历附件 |
-| **5.20** | README.md + GitHub整理 | 快速开始、架构图、GIF/截图、徽章 |
-| **5.21-22** | CSDN技术文章 | 《从零构建Agentic角色扮演记忆引擎》或类似；文末附GitHub |
-| **5.23** | 面试话术准备 | 5分钟介绍、15分钟深挖、抗压问题答案 |
-| **5.24** | 简历更新 | 项目名+GitHub链接+CSDN文章链接 |
-| **5.25** | 演示视频录制 | 3分钟：Tavo接入→对话→Streamlit面板展示记忆唤醒 |
+| **5.19** | ARCHITECTURE.md定稿 | 完整架构文档，突出 **"Prompt 编译器 + Sonnet 行为模拟器"** 核心定位 |
+| **5.20** | README.md + GitHub整理 | 快速开始、**Prompt 编译器架构图**、模型方言对比表、GIF/截图、徽章 |
+| **5.21-22** | CSDN技术文章 | **《Prompt 编译器：如何让 DeepSeek 输出 Sonnet 级别的 RP 体验》**；文末附GitHub |
+| **5.23** | 面试话术准备 | 5分钟介绍（突出 Prompt 编译器定位）、15分钟深挖（模型方言编译策略）、抗压问题答案 |
+| **5.24** | 简历更新 | 项目名+GitHub链接+CSDN文章链接；**简历关键词：Prompt Engineering / Model Behavior Correction / LLM Compiler** |
+| **5.25** | 演示视频录制 | 3分钟：**同一角色卡切换 DeepSeek/Gemini/Qwen，展示 AURA 如何编译出一致的 Sonnet 级输出** |
 
 **🎯 Week 4 总验收**：
-- ARCHITECTURE.md完整可读
-- CSDN文章发布
-- 简历已更新
-- 3分钟演示视频录制完成
+- ARCHITECTURE.md完整可读，核心定位清晰：**AURA = Prompt 编译器 + 模型行为校正引擎**
+- CSDN文章发布，标题体现 Prompt 编译器概念
+- 简历已更新，技术关键词匹配 LLM 编译器/行为校正方向
+- 3分钟演示视频录制完成，核心卖点：**"任何模型 → Sonnet 级 RP 体验"**
 - GitHub仓库public，README完善
 
 ---
@@ -869,7 +1011,3 @@ Day X 汇报：
 ```
 
 ---
-
-**宋，30天计划已定，9个痛点有归宿，验收标准全部量化。**
-
-现在开始 Day 1。 ❤️‍🔥

@@ -368,55 +368,24 @@ async def chat_completion(
         # ================================================================
         # --- 区块7: [LONG_TERM_MEMORY] 长记忆 — RAG 语义召回（v0.6.0）
         # ================================================================
-        # 策略：用当前用户输入作为 query，从 Chroma 召回 Top-5 相关记忆
-        # 降级：Chroma 不可用或为空时，回退全量注入
-        rag_memories = []
-        rag_source = "full_inject"  # 标记来源
+        # 策略：用当前用户输入作为 query，从 FAISS 召回 Top-5 相关记忆
+        # 注意：FAISS 不可用时应直接报错，不应静默降级为全量注入
+        # RAG 召回
+        query_text = last_input or user_name or ""
+        rag_memories = await memory_manager.search(query_text, top_k=5)
 
-        try:
-            # 尝试 RAG 召回
-            query_text = last_input or user_name or ""
-            if query_text:
-                rag_memories = await memory_manager.search(query_text, top_k=5)
-
-            if rag_memories:
-                rag_source = "rag_recall"
-                logger.info(
-                    f"[AURA→RAG] 语义召回成功 | query=\"{query_text[:50]}...\" | "
-                    f"召回 {len(rag_memories)} 条"
-                )
-            else:
-                # RAG 为空，回退全量注入
-                logger.info("[AURA→RAG] 召回为空，回退全量注入")
-        except Exception as e:
-            logger.warning(f"[AURA→RAG] 召回失败，回退全量注入: {e}")
-
-        # 如果 RAG 召回为空，使用全量注入
-        if not rag_memories:
-            long_term_memory = sys_comp.get("long_term_memory", [])
-            if long_term_memory:
-                # 去重
-                seen = set()
-                deduped = []
-                for mem in long_term_memory:
-                    normalized = mem.strip().rstrip("。，.!！?？")
-                    if normalized not in seen:
-                        seen.add(normalized)
-                        deduped.append(mem)
-
-                dup_count = len(long_term_memory) - len(deduped)
-                if dup_count > 0:
-                    logger.info(f"[AURA→去重] 长记忆去重: {len(long_term_memory)}条 → {len(deduped)}条 (移除{dup_count}条重复)")
-                rag_memories = deduped
-                rag_source = "full_inject"
+        if rag_memories:
+            logger.info(
+                f"[AURA→RAG] 语义召回成功 | query=\"{query_text[:50]}...\" | "
+                f"召回 {len(rag_memories)} 条"
+            )
+        else:
+            logger.info("[AURA→RAG] 召回为空（FAISS 中暂无匹配记忆）")
 
         # 构建记忆区块
         if rag_memories:
             memory_lines = ["[LONG_TERM_MEMORY]"]
-            if rag_source == "rag_recall":
-                memory_lines.append("（以下为与当前场景最相关的记忆，由 AURA RAG 系统召回）")
-            else:
-                memory_lines.append("以下是关于角色与用户之间的关键记忆与事件：")
+            memory_lines.append("（以下为与当前场景最相关的记忆，由 AURA RAG 系统召回）")
             memory_lines.append("")
             for mem in rag_memories:
                 memory_lines.append("- %s" % mem)
@@ -431,7 +400,7 @@ async def chat_completion(
             blocks.append("\n".join(memory_lines))
 
             logger.info(
-                f"[AURA→记忆] 区块注入完成 | 来源: {rag_source} | "
+                f"[AURA→记忆] 区块注入完成 | "
                 f"{len(rag_memories)}条 | 总字符: {sum(len(m) for m in rag_memories)}"
             )
 
@@ -478,7 +447,7 @@ async def chat_completion(
                 f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"原始长度: {len(original_system)}字符 → 重组后: {len(optimized_system)}字符\n")
                 f.write(f"区块数: {len(blocks)}\n")
-                f.write(f"RAG来源: {rag_source}\n")
+                f.write(f"RAG来源: aura_faiss\n")
                 f.write(f"{'='*60}\n\n")
                 f.write(optimized_system)
             logger.info(f"[AURA→日志] 重组后 Prompt 已保存到: {reassembled_file} ({len(optimized_system)}字符)")
@@ -793,12 +762,9 @@ async def initialize_aura():
             logger.warning("没有配置有效的LLM后端，请检查环境变量")
         
         # 初始化记忆管理器（v0.6.0）
-        try:
-            await memory_manager.initialize()
-            mem_count = await memory_manager.get_memory_count()
-            logger.info(f"[AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: {mem_count}")
-        except Exception as e:
-            logger.warning(f"[AURA→记忆] MemoryManager 初始化失败（降级模式）: {e}")
+        await memory_manager.initialize()
+        mem_count = await memory_manager.get_memory_count()
+        logger.info(f"[AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: {mem_count}")
         
     except Exception as e:
         logger.exception("AURA初始化失败")

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     
     # 记忆管理配置
     memory_summary_interval: int = 5  # 每 N 轮对话总结一次记忆
+    rag_time_gamma: float = 1.5        # RAG 时间权重幂次（越大越强调新记忆）
+    rag_semantic_weight: float = 0.6   # RAG 语义分权重（余下为时间权重）
+    structured_memory_enabled: bool = False  # 是否启用结构化记忆存储（叙事增强）
     
     # 调试配置
     debug_mode: bool = True
