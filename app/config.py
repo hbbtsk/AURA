@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     
     # DeepSeek配置（生成主模型）
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_api_key: str = Field(default="sk-2a932b6c56db464d8e7e5c73d80bc182", env="DEEPSEEK_API_KEY")
+    deepseek_api_key: str = Field(default="", env="DEEPSEEK_API_KEY")
     deepseek_model: str = "deepseek-v4-flash"
     # deepseek_model: str = "deepseek-v4-pro"
     
@@ -120,10 +120,11 @@ def validate_llm_config() -> Dict[str, bool]:
 # 环境变量模板
 ENV_TEMPLATE = """
 # AURA配置
-AURA_DEBUG=false
+AURA_DEBUG=true
 
 # LLM API密钥
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
+KIMI_API_KEY=your_kimi_api_key_here
 GEMINI_API_KEY=your_gemini_api_key_here
 
 # 数据库配置（可选）

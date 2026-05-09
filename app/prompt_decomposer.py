@@ -491,4 +491,6 @@ class PromptDecomposer:
             "world_book": "",
             "xml_character_cards": [],
             "full_content": "",
+            "has_user_prefix": False,
+            "has_markers": False,
         }

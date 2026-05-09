@@ -6,7 +6,7 @@ AURA 记忆管理器 — SQLite（原始对话）+ FAISS（向量记忆）
 - Kimi → 总结（记忆提取，便宜模型）
 - 每 5 轮调用 Kimi 总结一次，新记忆存入 FAISS
 - 每轮根据用户输入语义召回 Top-5（时间加权 RAG）
-- 使用 LLM API 生成 embedding（无需本地模型）
+- 使用本地 bge-small-zh-v1.5 模型生成 embedding（sentence-transformers）
 """
 
 import asyncio
@@ -28,6 +28,7 @@ from app.config import settings, get_llm_config
 logger = logging.getLogger("aura.memory")
 
 import faiss
+from sentence_transformers import SentenceTransformer
 
 
 class MemoryManager:
@@ -41,8 +42,9 @@ class MemoryManager:
         self._initialized = False
         self._round_counter: Dict[str, int] = {}
         self._summary_lock = asyncio.Lock()
-        self._dimension = 1536  # Kimi text-embedding-v2 / DeepSeek text-embedding-v2 均为 1536 维
+        self._dimension = 512  # bge-small-zh-v1.5 输出 512 维
         self._next_seq = 0     # 单调递增序列号：AURA 生成记忆的时序标记
+        self._embedding_model: Optional[SentenceTransformer] = None  # 懒加载本地 embedding 模型
 
     async def initialize(self):
         """初始化：创建 SQLite 表 + 初始化 FAISS"""
@@ -196,64 +198,198 @@ class MemoryManager:
         finally:
             conn.close()
 
+    # ============ 对话同步（TAVO 编辑/撤回处理） ============
+
+    async def sync_dialogue_from_tavo(self, session_id: str, tavo_messages: List[dict]):
+        """
+        倒序匹配 TAVO 发来的对话与本地数据库，处理用户编辑/撤回操作。
+
+        核心逻辑：
+        1. 从尾部开始逐条比较 content 文本（编辑/撤回总是发生在最近的消息上）
+        2. 找到第一个不一致的位置 → 截断数据库 → 用 TAVO 数据覆盖
+        3. 只处理 raw_dialogues 表，不影响 FAISS 记忆
+
+        Args:
+            session_id: AURA 会话 ID
+            tavo_messages: TAVO 发来的 messages[]（最近多轮对话）
+                           [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
+        """
+        if not tavo_messages:
+            return
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+
+            # 1. 读取该 session 的所有原始对话（按 round_number ASC）
+            cursor.execute(
+                """SELECT id, role, content, round_number FROM raw_dialogues
+                   WHERE session_id = ? ORDER BY round_number ASC, id ASC""",
+                (session_id,)
+            )
+            db_rows = cursor.fetchall()
+            # db_rows: [(id, role, content, round_number), ...]
+
+            if not db_rows:
+                # 数据库为空，直接写入所有 TAVO 消息
+                logger.info(f"[AURA→同步] 数据库为空，直接写入 {len(tavo_messages)} 条消息")
+                for msg in tavo_messages:
+                    cursor.execute(
+                        "INSERT INTO raw_dialogues (session_id, role, content, round_number) VALUES (?, ?, ?, ?)",
+                        (session_id, msg.get("role", "user"), msg.get("content", ""), 1)
+                    )
+                conn.commit()
+                return
+
+            # 2. 倒序匹配：从尾部开始逐条比较 content
+            #    只比较 TAVO 消息数量范围内的部分
+            match_count = 0
+            min_len = min(len(tavo_messages), len(db_rows))
+
+            for i in range(min_len):
+                tavo_idx = len(tavo_messages) - 1 - i   # TAVO 倒序索引
+                db_idx = len(db_rows) - 1 - i            # DB 倒序索引
+
+                tavo_content = tavo_messages[tavo_idx].get("content", "").strip()
+                db_content = db_rows[db_idx][2].strip()  # db_rows[2] = content
+
+                if tavo_content != db_content:
+                    break  # 找到第一个不一致的位置
+                match_count += 1
+
+            # 3. 如果全部匹配 → 无需操作
+            if match_count == len(tavo_messages) and match_count == len(db_rows):
+                logger.debug(f"[AURA→同步] 对话完全一致，无需同步 | 会话: {session_id} | 消息数: {len(db_rows)}")
+                return
+
+            # 4. 计算截断点
+            #    从尾部开始 match_count 条是匹配的，前面的需要替换
+            keep_from_db = match_count  # 数据库保留的尾部条数
+            truncate_at = len(db_rows) - keep_from_db  # 截断位置（0-based）
+
+            # 获取截断位置对应的 round_number
+            if truncate_at < len(db_rows):
+                truncate_round = db_rows[truncate_at][3]  # db_rows[3] = round_number
+            else:
+                truncate_round = 0
+
+            # 5. 截断数据库：删除 truncate_at 及之后的所有记录
+            if truncate_at < len(db_rows):
+                cursor.execute(
+                    """DELETE FROM raw_dialogues
+                       WHERE session_id = ? AND round_number >= ?""",
+                    (session_id, truncate_round)
+                )
+                deleted_count = cursor.rowcount
+                logger.info(
+                    f"[AURA→同步] 截断数据库 | 会话: {session_id} | "
+                    f"从 round {truncate_round} 开始删除 | 删除 {deleted_count} 条 | "
+                    f"保留尾部 {keep_from_db} 条"
+                )
+            else:
+                deleted_count = 0
+
+            # 6. 写入 TAVO 的新数据（从截断位置开始）
+            #    需要写入的是 tavo_messages 中未匹配的部分
+            new_messages = tavo_messages[:len(tavo_messages) - keep_from_db]
+            if new_messages:
+                # 获取当前最大 round_number
+                cursor.execute(
+                    "SELECT COALESCE(MAX(round_number), 0) FROM raw_dialogues WHERE session_id = ?",
+                    (session_id,)
+                )
+                current_max_round = cursor.fetchone()[0]
+
+                for i, msg in enumerate(new_messages):
+                    round_num = current_max_round + (i // 2) + 1  # user+assistant 算一轮
+                    cursor.execute(
+                        "INSERT INTO raw_dialogues (session_id, role, content, round_number) VALUES (?, ?, ?, ?)",
+                        (session_id, msg.get("role", "user"), msg.get("content", ""), round_num)
+                    )
+
+                conn.commit()
+                logger.info(
+                    f"[AURA→同步] 写入 {len(new_messages)} 条新消息 | "
+                    f"会话: {session_id} | 匹配: {match_count}/{min_len} | "
+                    f"删除: {deleted_count} | 新增: {len(new_messages)}"
+                )
+            else:
+                logger.info(
+                    f"[AURA→同步] 无需写入新消息 | 会话: {session_id} | "
+                    f"匹配: {match_count}/{min_len} | 删除: {deleted_count}"
+                )
+
+            # 7. 重置轮次计数器，确保后续 get_round_number 基于最新数据
+            if session_id in self._round_counter:
+                del self._round_counter[session_id]
+
+        except Exception as e:
+            logger.error(f"[AURA→同步] 对话同步失败 | 会话: {session_id} | 错误: {e}")
+        finally:
+            conn.close()
+
     # ============ FAISS 记忆管理 ============
 
-    async def _get_embedding(self, text: str) -> List[float]:
-        """使用 LLM API 生成文本 embedding
+    def _load_embedding_model(self):
+        """懒加载本地 embedding 模型（bge-small-zh-v1.5）
 
-        优先使用 Kimi（便宜），回退 DeepSeek
-        如果都不可用，返回随机向量（降级）
+        优先从本地 models/ 目录加载（通过 modelscope 下载），
+        如果本地不存在则尝试从 huggingface 在线下载
         """
-        # 尝试 Kimi → DeepSeek 依次尝试
-        for provider in ["kimi", "deepseek"]:
-            try:
-                llm_config = get_llm_config(provider)
-            except Exception:
-                logger.debug(f"[AURA→向量] {provider} 配置不可用，跳过")
-                continue
+        if self._embedding_model is None:
+            # 本地模型路径（通过 modelscope 下载）
+            local_model_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..", "..", "models", "BAAI", "bge-small-zh-v1___5"
+            )
+            # 也检查不带特殊字符的路径
+            alt_model_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..", "..", "models", "BAAI", "bge-small-zh-v1.5"
+            )
 
-            if not llm_config or not llm_config.api_key:
-                continue
+            if os.path.exists(local_model_path):
+                model_name = local_model_path
+            elif os.path.exists(alt_model_path):
+                model_name = alt_model_path
+            else:
+                model_name = "BAAI/bge-small-zh-v1.5"
 
-            try:
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {llm_config.api_key}"
-                }
+            logger.info(f"[AURA→向量] 加载本地 embedding 模型: {model_name}")
+            start = time.time()
+            # 使用 CPU 设备，避免 torch CUDA 警告
+            self._embedding_model = SentenceTransformer(
+                model_name,
+                device="cpu"
+            )
+            elapsed = time.time() - start
+            logger.info(f"[AURA→向量] 模型加载完成 | 耗时: {elapsed:.2f}s | 维度: {self._dimension}")
 
-                # Kimi 使用独立的 embedding API
-                if provider == "kimi":
-                    embed_url = "https://api.moonshot.cn/v1/embeddings"
-                    payload = {
-                        "model": "text-embedding-v2",
-                        "input": text
-                    }
-                else:
-                    # DeepSeek embedding
-                    embed_url = f"{llm_config.base_url.rstrip('/')}/embeddings"
-                    payload = {
-                        "model": "text-embedding-v2",
-                        "input": text
-                    }
+    async def _get_embedding(self, text: str) -> List[float]:
+        """使用本地 bge-small-zh-v1.5 模型生成文本 embedding
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                    response = await client.post(embed_url, headers=headers, json=payload)
+        模型在首次调用时自动下载（~60MB），后续从 huggingface 缓存加载
+        纯 CPU 推理，单次约 8-12ms
+        """
+        try:
+            # 在事件循环线程中运行同步模型推理
+            # SentenceTransformer.encode() 是 CPU 密集型操作，用 run_in_executor 避免阻塞
+            loop = asyncio.get_event_loop()
 
-                if response.status_code == 200:
-                    data = response.json()
-                    embedding = data["data"][0]["embedding"]
-                    return embedding
-                else:
-                    logger.debug(f"[AURA→向量] {provider} embedding API 返回 {response.status_code}: {response.text[:100]}")
-                    continue
+            def _encode():
+                self._load_embedding_model()
+                # bge-small-zh-v1.5 需要添加 "为这个句子生成表示以用于检索相关文章：" 前缀以获得最佳效果
+                # 但角色扮演场景的语义匹配不需要检索式前缀，直接编码即可
+                embedding = self._embedding_model.encode(text, normalize_embeddings=True)
+                return embedding.tolist()
 
-            except Exception as e:
-                logger.debug(f"[AURA→向量] {provider} embedding 失败: {e}")
-                continue
+            embedding = await loop.run_in_executor(None, _encode)
+            return embedding
 
-        # 降级：返回零向量
-        logger.warning("[AURA→向量] 所有 embedding API 均不可用，返回零向量")
-        return [0.0] * self._dimension
+        except Exception as e:
+            logger.error(f"[AURA→向量] 本地 embedding 失败: {e}")
+            # 降级：返回零向量
+            return [0.0] * self._dimension
 
     async def import_from_tavo(self, memories: List[str], session_id: str = "tavo_import"):
         """从 TAVO System Prompt 导入已有记忆到 FAISS"""

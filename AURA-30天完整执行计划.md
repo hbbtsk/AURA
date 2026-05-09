@@ -64,7 +64,7 @@ AURA 的核心工作流程是 **"拆解 → 编译 → 重组"**：
 2. **编译**：对各组件应用模型专属优化策略（DeepSeek 需要元角色伪装、Gemini 需要反抢戏指令、Qwen 需要特定格式约束），并叠加质量控制策略（RAG压缩、StateManager注入、两头约束等）
 3. **重组**：将编译后的组件重新组装为针对目标模型最优的 Prompt 发送给 LLM
 
-> 由于 TAVO 是闭源软件，无法在其输出中添加自定义字段，因此采用 **"格式拆解 + 区块重组"** 策略——通过硬解析识别 System Prompt 中的各区域边界，重组为 9 个标准化区块，并应用"两头约束"（开头 Priming + 结尾 Recency Effect）。
+> 由于 TAVO 是闭源软件，无法在其输出中添加自定义字段，因此采用 **"格式拆解 + 区块重组"** 策略——通过硬解析识别 System Prompt 中的各区域边界，重组为 **9 个标准化区块**（v0.8.0），并应用"两头约束"（开头 Priming + 结尾 Recency Effect）。
 
 ---
 
@@ -88,6 +88,7 @@ AURA 的核心工作流程是 **"拆解 → 编译 → 重组"**：
 | 12 | **模型输出太多** — Gemini 输出过长，经常自己推进剧情 | — | Week 2 |
 | 13 | **系统提示词锁不住** — 写了明确的 system prompt，LLM 仍会偏离人设 | — | Week 3 |
 | 14 | **时间维度缺失 → 已完成事件重复生成** — 长记忆无时间戳/时序标记，已完结剧情被反复重新生成 | — | Week 3 |
+| 15 | **用户输入意图隐含 → LLM 默认接话而非渲染反应** — 用户输入 `*我点了一支烟*` 时期待的是他人反应，LLM 却替 user 生成后续行动或台词。用户不会写"请输出其他人的表现"，但 RP 体验需要 LLM "读空气" | — | 未来 |
 
 ---
 
@@ -99,10 +100,11 @@ AURA 的核心工作流程是 **"拆解 → 编译 → 重组"**：
 | 模型层 | httpx 直连 | 多后端切换（DeepSeek/Kimi/Gemini/Qwen） |
 | **Prompt 编译器** | **PromptDecomposer + ModelDialectCompiler** | **核心创新：将 TAVO 混沌输入编译为目标模型专属指令** |
 | 结构化存储 | SQLite（直接 sqlite3） | 原始对话、会话、dynamic_state、plot_anchors、关系边 |
-| 向量记忆 | FAISS（IndexFlatL2） | LLM API 生成 embedding（Kimi → DeepSeek 回退），时间加权 RAG |
+| 向量记忆 | FAISS（IndexFlatL2） | 本地 `sentence-transformers`（`BAAI/bge-small-zh-v1.5`，512维）生成 embedding，时间加权 RAG |
 | 记忆总结 | Kimi API | 每 5 轮自动总结对话 → 提取新记忆 → 存入 FAISS |
-| 工作记忆 | Python dict | 最近 N 轮热缓存 |
-| 关系图谱 | SQLite（骨架） | 角色节点 + 情感权重边（待 Day 4 完善） |
+| 工作记忆 | Python dict | 最近 5 轮对话（10 条消息）热缓存 |
+| **关系图谱** | **SQLite（5表结构）** | **实体节点 + 多维有向关系边 + 事件日志 + 群体/派系 + 归属表（Week 3 完善）** |
+| **人物状态** | **SQLite** | **dynamic_state 表：位置/健康/情绪/行动能力等结构化状态（StateManager 维护）** |
 | 辅助 | httpx、numpy、faiss-cpu |
 
 ### 技术栈名词通俗解释
@@ -221,8 +223,8 @@ class ModelDialectCompiler:
    - 如果第一行不是 `"以下是关于..."` → 用户写了自定义提示词 → **保留原始内容 + 增量注入**
    - 替换后的 System Prompt 结构：`[AURA系统提示词] + [长记忆] + [记忆应用规则] + [USER设定] + [角色卡] + [世界书] + [XML角色卡] + [增量注入指令]`
 10. **重组逻辑保留标记**（`completions_simple.py`）：
-   - 拆解后重组时，保留 `=====` 标记在原始位置
-   - 确保 TAVO 的格式标记在转发后仍然完整，不影响后续轮次解析
+    - 拆解后重组时，保留 `=====` 标记在原始位置
+    - 确保 TAVO 的格式标记在转发后仍然完整，不影响后续轮次解析
 
 #### 晚上（规划）：区块化 Prompt 重组方案（待实现）
 
@@ -230,44 +232,39 @@ class ModelDialectCompiler:
 
 **核心思路**：用 `[SECTION_NAME]` 区块标题 + 结构化内容，替代自然语言混杂的原始 System Prompt。同时与 LLM 约定通信标记（双引号=台词、**星号=动作、（）=心理），让输入输出格式一致。
 
-**重组后的 Prompt 结构**：
+**重组后的 Prompt 结构（v0.8.0 更新）**：
 
 ```
-[PROTOCOL]        ← 通信标记约定（元指令，放在最前面）
-[CONSTRAINTS]     ← 角色边界 + 负向指令
-[CHARACTER_CARD]  ← 角色卡（完整保留，不裁剪）
-[DYNAMIC_STATE]   ← 实体当前状态 [state: xxx]
-[WORKING_MEMORY]  ← 最近 N 轮对话（保持原始标记）
-[RAG_EPISODIC]    ← 召回记忆 [recall_memory: xxx]
-[WORLD_CONTEXT]   ← 世界书（有则注入，无则跳过）
-[OUTPUT_SPEC]     ← 输出格式 + 标记使用规范
+[PROTOCOL]             ← 通信标记约定 + 关系维度量化标尺（全局生效）
+[CONSTRAINTS]          ← 角色边界 + 负向指令
+[CHARACTER_CARD]       ← 角色卡（完整保留，不裁剪）
+[CHARACTER_SITUATION]  ← 角色当前态势：动态状态 + 关系子图融合渲染
+[WORKING_MEMORY]       ← 最近 5 轮对话（10 条消息，user+assistant 一来一回）
+[RECENT_MEMORY]        ← 最近 10 条总结化记忆（约 30+ 轮对话压缩），直通注入
+[LONG_TERM_MEMORY]     ← 深度记忆 [recall_memory: xxx]，意图感知 RAG 召回
+[WORLD_CONTEXT]        ← 世界书（有则注入，无则跳过）
+[OUTPUT_SPEC]          ← 输出格式 + 标记使用规范 + 关系遵循强制规则
 ```
 
-**区块分类（按生成方式）**：
+> **关键变更（v0.8.0）**：
+> 1. 原 `[DYNAMIC_STATE]` 区块升级为 `[CHARACTER_SITUATION]`，不再只注入孤立的 `state_json`，而是将 **人物状态 + 关系子图 + 综合语义 + 行为锚点** 融合为"角色导演笔记"，让模型直接理解"这个角色现在怎么看世界"。
+> 2. **新增 `[RECENT_MEMORY]` 区块**：最近 10 条 AURA 总结化记忆（覆盖约 30+ 轮对话）**直通注入，不经过 RAG**，保证高频上下文的下限。
+> 3. **`[WORKING_MEMORY]` 压缩**：从 TAVO 原生的 12 轮压缩为 **5 轮对话（10 条消息）**，减少 Prompt 中近期对话的冗余噪声。
+> 4. **`[LONG_TERM_MEMORY]` 聚焦深度**：仅保留 10 条之外的**深度记忆**，通过意图感知 RAG 召回，避免字面匹配召回无关内容。
 
-| 类别 | 区块 | 生成方式 | 说明 |
-|------|------|---------|------|
-| **静态模板**（写死） | `[PROTOCOL]` | 固定文本，直接组装 | 标记约定规则，不依赖任何动态数据 |
-| | `[CONSTRAINTS]` | 固定文本，直接组装 | 越权禁令 + 负向指令，不依赖任何动态数据 |
-| | `[OUTPUT_SPEC]` | 固定文本，直接组装 | 输出格式规范，不依赖任何动态数据 |
-| **拆解自 TAVO**（不裁剪） | `[CHARACTER_CARD]` | 从 TAVO System Prompt 拆解，**完整保留** | 角色卡是 LLM 理解角色的核心依据，缩写会丢失细节 |
-| | `[WORKING_MEMORY]` | 从 TAVO 对话历史拆解，最近 N 轮 | 保持原始标记格式不变 |
-| | `[WORLD_CONTEXT]` | 从 TAVO System Prompt 拆解，**有则注入，无则跳过** | 位置：`=====角色卡结束=====` 与 `[Start a new Chat]` 之间的内容 |
-| **Agent 动态生成** | `[DYNAMIC_STATE]` | StateManager 从数据库读取结构化状态，格式化为 `[state: xxx]` | Day 4 真实化 |
-| | `[RAG_EPISODIC]` | Chroma 语义检索 + 重排序，召回 Top-5 最相关记忆，格式化为 `[recall_memory: xxx]` | Day 2 实现向量库后可用 |
+**各区块详细设计（v0.8.0 更新）**：
 
-**各区块详细设计**：
-
-| 区块 | 内容 | 来源 |
-|------|------|------|
-| `[PROTOCOL]` | 标记约定：`"对话"`=台词、`**动作**`=动作描写、`（心理）`=内心独白；说明 LLM 输出也需遵循此格式 | 静态模板（写死） |
-| `[CONSTRAINTS]` | 越权禁令（禁止替 user 行动/台词）、负向指令（禁止臀腿腰胸、禁止推进剧情）、角色边界 | 静态模板（写死） |
-| `[CHARACTER_CARD]` | 角色卡**完整保留**，不裁剪、不缩写 | 拆解自 `=====角色卡开始/结束=====` 标记区域 |
-| `[DYNAMIC_STATE]` | 用 `[state: 实体名=状态值]` 格式列出所有实体的当前状态 | Agent（StateManager）从数据库读取后生成 |
-| `[WORKING_MEMORY]` | 最近 3-5 轮对话，保持原始标记格式（双引号/**/（）） | 拆解自 `[Start a new Chat]` 之后的多轮对话 |
-| `[RAG_EPISODIC]` | 用 `[recall_memory: 事件描述]` 格式列出召回的记忆事件 | Chroma 语义检索 Top-5（Day 2 实现） |
-| `[WORLD_CONTEXT]` | 世界书内容，**有则注入，无则跳过** | 拆解自 `=====角色卡结束=====` 与 `[Start a new Chat]` 之间的内容 |
-| `[OUTPUT_SPEC]` | 输出长度、结构比例（环境30%/NPC40%/行动空间30%）、标记使用规范、禁止项 | 静态模板（写死） |
+| 区块 | 类别 | 内容 | 来源 |
+|------|------|------|------|
+| `[PROTOCOL]` | 静态模板 | 标记约定 + **关系维度量化标尺**：romantic/trust/duty/power/familiarity/proprietary 等维度的 0.0-1.0 分级语义定义 | 写死，全局生效 |
+| `[CONSTRAINTS]` | 静态模板 | 越权禁令、负向指令、角色边界 | 写死 |
+| `[OUTPUT_SPEC]` | 静态模板 | 输出长度/结构/标记规范 + **关系遵循强制规则** + COT 自检 | 写死 |
+| `[CHARACTER_CARD]` | 拆解自 TAVO | 角色卡**完整保留**，不裁剪、不缩写 | `=====角色卡开始/结束=====` 标记区域 |
+| `[WORKING_MEMORY]` | 拆解自 TAVO | **最近 5 轮对话（10 条消息，user+assistant 一来一回）**，保持原始标记格式 | 对话历史 |
+| `[RECENT_MEMORY]` | Agent 动态生成 | **最近 10 条 AURA 总结化记忆**（约 30+ 轮对话压缩），**直通注入，不经过 RAG** | FAISS 按 `insert_seq` 逆序取最新 10 条 |
+| `[LONG_TERM_MEMORY]` | Agent 动态生成 | **深度记忆** `[recall_memory: 事件描述]`，意图感知 RAG 召回（10 条之外） | FAISS 多路查询 + 意图重排 Top-5 |
+| `[WORLD_CONTEXT]` | 拆解自 TAVO | 世界书内容，**有则注入，无则跳过** | 角色卡与对话之间的区域 |
+| `[CHARACTER_SITUATION]` | **Agent 动态生成** | **角色当前态势（状态+关系融合）**：`dynamic_state` + BFS关系子图（活跃实体→距离≤2→visibility过滤→Top-12）+ 综合语义 + 行为锚点 + 核心矛盾 | **StateManager + RelationshipManager** |
 
 **标记约定（`[PROTOCOL]` 核心内容）**：
 
@@ -278,6 +275,91 @@ class ModelDialectCompiler:
 - （心理活动）（小括号）= 角色内心独白，未说出口的想法
 - 输入格式：user 的消息会使用上述标记，LLM 需正确理解
 - 输出格式：LLM 的回复也必须使用上述标记，保持格式一致
+```
+
+**关系维度量化标尺（`[PROTOCOL]` 新增，全局生效）**：
+
+```
+== 关系维度量化标尺（所有角色行为必须遵循）==
+romantic（浪漫/情感维度）:
+  0.0-0.2: 无浪漫成分，纯事务性/敌对往来
+  0.2-0.4: 欣赏/好感，会不自觉关注对方，但不会主动表达
+  0.4-0.6: 心动/暧昧，主动寻找相处机会，言语有试探性
+  0.6-0.8: 深爱/committed，愿为对方涉险，出现情感独占欲，身体接触自然化
+  0.8-1.0: 灵魂绑定，超越理性，成为彼此存在的核心理由，分离产生生理痛苦
+
+trust（信任维度）:
+  0.0-0.2: 完全不信任，言语试探，保留后手
+  0.2-0.4: 谨慎合作，事实交流为主，不涉及脆弱面
+  0.4-0.6: 基本信任，可托付次要事务，会分享情绪
+  0.6-0.8: 深度信任，愿暴露弱点，默认对方不会背叛
+  0.8-1.0: 绝对信任，生死相托，无需言语验证
+
+proprietary（占有欲/排他性）:
+  0.0-0.3: 无占有欲，对方与他人亲密也无感
+  0.3-0.6: 轻微醋意，会用玩笑掩饰
+  0.6-0.8: 明确排他，对竞争者保持敌意或冷处理
+  0.8-1.0: 病态独占，视对方为私有，可能采取极端手段排除竞争者
+
+（其余维度：duty/power/familiarity/rivalry/gratitude/guilt 同理分级定义）
+```
+
+> **为什么需要标尺？** 直接丢 `romantic=0.85` 给模型，它不知道"0.85 该做什么动作"。预定义分级语义后，AURA 在 `[CHARACTER_SITUATION]` 中直接引用等级名称（如"灵魂绑定级"），模型通过标尺理解行为预期。
+
+**`[CHARACTER_SITUATION]` 注入示例**：
+
+```
+[CHARACTER_SITUATION]
+
+== Ruby Rose ==
+【当前状态】位置=宿舍走廊 | 健康=轻伤(左臂绷带) | 情绪=焦虑+困倦 | 行动能力=85%
+【关系束】
+  → user: romantic=0.85(灵魂绑定级) + trust=0.90(绝对信任级) + proprietary=0.75(强排他级)
+    └─ 综合语义: Ruby 视 user 为超越生命的存在，无条件信赖，对任何接近 user 的异性保持敌意
+    └─ 行为锚点: 独处时无意识靠近/肢体接触；提到 user 时眼神变柔和；发现竞争者时笑容僵硬
+  → Yang: trust=0.90(绝对信任级) + familiarity=0.95(极高) + guilt=0.30(轻微亏欠)
+    └─ 行为锚点: 频繁提及Yang；想去医务室探望但被事务绊住；对话中突然走神提起Yang
+  → Weiss: trust=0.60(基本信任级) + rivalry=0.20(轻微竞争)
+    └─ 行为锚点: 合作时高效但不交心，偶尔会抢话
+【综合态势】
+  Ruby 当前核心矛盾: 想陪 user vs 担心 Yang vs 对 Weiss 的微妙对抗
+  这导致她: 注意力分散、决策犹豫、可能在对话中突然走神提起Yang
+
+== Yang Xiao Long ==
+【当前状态】位置=医务室 | 健康=产后虚弱 | 情绪=抑郁+自责 | 行动能力=20%
+【关系束】
+  → Ruby: trust=0.70(深度信任级) + familiarity=0.95(极高) + proprietary=0.30↓(放手焦虑)
+    └─ 行为锚点: 嘴上说"别管我"，实际渴望Ruby陪伴
+【综合态势】
+  Yang 当前核心矛盾: 身体虚弱导致无力感 vs 自尊心拒绝被照顾
+  这导致她: 对关心反应激烈（"我能行"）、深夜独自流泪、回避Ruby
+```
+
+> **设计原则**：
+> 1. **存储分离，注入合并**：`dynamic_state`（事实型，每轮可能变）和 `relationship_edges`（情感型，每 5-10 轮变）在数据库中分表存储，但在 Prompt 中融合为"角色导演笔记"
+> 2. **组合语义优于单维度**：不是"Ruby→user romantic=0.85"，而是"romantic 高 + trust 高 + proprietary 高 = 灵魂绑定级排他型深爱"，模型更容易据此生成一致行为
+> 3. **行为锚点是硬指令**：不是让模型自己从数字推"该做什么"，而是直接告诉它"这种关系深度下，你应该写什么样的细节"
+> 4. **核心矛盾驱动行为**：给模型一个"角色当前内心冲突"，它自然会写出有张力的对话，而不需要逐句规定
+
+**`[OUTPUT_SPEC]` 关系遵循强制规则（新增）**：
+
+```
+[OUTPUT_SPEC]
+...
+
+== 关系遵循强制规则 ==
+1. 每轮生成前，检查当前发言者在 [CHARACTER_SITUATION] 中对所有相关实体的关系参数
+2. 如果 romantic > 0.6，必须在动作描写或内心独白中体现对应深度（不能嘴上说爱行为像路人）
+3. 如果 trust < 0.3，对话必须有试探、保留、或防备性措辞
+4. 如果 proprietary > 0.6，当相关实体与他人互动时，必须体现微妙反应（眼神、停顿、转移话题）
+5. 如果 dynamic_state 中情绪为"抑郁"，对话不能写成"开朗"，即使关系参数高也要带压抑感
+6. 关系数据优先级高于角色卡默认设定。若角色卡写"Yang 是乐天派"但 dynamic_state 情绪=抑郁，以抑郁为准
+
+== 生成前自检（COT）==
+当前发言者: [填入角色名]
+- 我对 user 的关系最深维度是什么？参数多少？对应的行为锚点是什么？
+- 我当前的情绪/健康状态会怎么影响这些关系的表达？
+- 我的回复是否符合以上两点？如果不符合，重写
 ```
 
 **与 TAVO 原始格式的兼容性**：
@@ -357,11 +439,10 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | 项目精简（删除未参与文件） | — | ✅ |
 | 模型名映射修复（deepseek-v4-flash → deepseek） | `app/api/completions_simple.py` | ✅ |
 | Prompt 拆解器（三层递进标记解析） | `app/prompt_decomposer.py` | ✅ |
-| Prompt 区块重组（9 区块，内联实现，已移除 PromptReassembler） | `app/api/completions_simple.py` | ✅ |
+| Prompt 区块重组（8 区块，内联实现，已移除 PromptReassembler） | `app/api/completions_simple.py` | ✅ |
 | Prompt Dump（自动保存请求到 prompt_dumps/） | `app/api/completions_simple.py` | ✅ |
 | 用户自定义提示词检测（替换/保留双分支） | `app/prompt_decomposer.py` | ✅ |
 | 重组逻辑保留 `=====` 标记 | `app/api/completions_simple.py` | ✅ |
-| 区块化 Prompt 重组（9 区块，统一流程） | `app/api/completions_simple.py` | ✅ |
 | 用户名动态提取（从对话第一条 user 消息） | `app/api/completions_simple.py` | ✅ |
 | 重组后 Prompt 保存到独立文件 | `app/api/completions_simple.py` | ✅ |
 | COT 自我校验指令（[OUTPUT_SPEC] 末尾追加 5 步检查） | `app/api/completions_simple.py` | ✅ |
@@ -379,12 +460,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 4. **Prompt Dump 文件名**：从 `prompt_{timestamp}_{id}.txt` 改为 `prompt_{YYYYMMDD_HHMMSS}.txt`，提高可读性。
 
-5. **区块化 Prompt 重组（已实现 v0.5.0）**：将拆解后的组件重组为结构化区块 Prompt，替代 TAVO 原始的混杂 System Prompt。9 个区块按生成方式分为三类：
-   - **静态模板（写死）**：`[PROTOCOL]`（标记约定）、`[CONSTRAINTS]`（越权禁令+负向指令）、`[OUTPUT_SPEC]`（输出格式规范）— 固定文本，直接组装
-   - **拆解自 TAVO（不裁剪）**：`[CHARACTER_CARD]`（完整保留）、`[USER_PROFILE]`（用户设定）、`[RECENT_DIALOGUE]`（最近N轮对话）、`[LONG_TERM_MEMORY]`（长记忆，去重后全部注入）、`[WORLD_CONTEXT]`（世界书，有则注入无则跳过）
-   - **Agent 动态生成**：`[CURRENT_STATE]`（StateManager 从数据库读取，当前为 Mock）、`[MAIN_PROMPT]`（用户自定义提示词，有条件出现）
-   - 同时与 LLM 约定通信标记（双引号=台词、**星号=动作、（）=心理），让输入输出格式一致。
-   - 验证结果（2026-05-03 21:26:27）：原始 28,735 字符 → 重组后 30,511 字符，9 个区块，LLM 正常流式响应 605 字符。
+5. **区块化 Prompt 重组（v0.5.0→v0.8.0 演进）**：将拆解后的组件重组为结构化区块 Prompt。v0.5.0 验证通过（原始 28,735 字符 → 重组后 30,511 字符，LLM 正常响应）。v0.7.0 升级为 8 区块方案，原 `[DYNAMIC_STATE]` 升级为 `[CHARACTER_SITUATION]`（状态+关系融合）。v0.8.0 进一步压缩 `[WORKING_MEMORY]` 为 5 轮对话，并**新增 `[RECENT_MEMORY]` 区块**（最近 10 条总结化记忆直通注入），形成 **9 区块方案**。详见上文"晚上（规划）：区块化 Prompt 重组方案"。
 
 6. **用户名动态提取（从对话第一条 user 消息）**：最初使用 `user_profile` 正则 `^(.+?)是\1` 提取用户名，但该格式可能因用户设定写法不同而匹配失败。改为从对话中第一条 `role == "user"` 的消息内容提取冒号前的内容作为用户名（TAVO 格式固定为 `"用户名: 对话内容"`），更准确可靠。`user_profile` 正则作为后备方案保留。
 
@@ -399,13 +475,12 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 9. **"RAG First, FormatGuard Later" 策略**：分析发现长记忆占 Prompt 的 66%（20,000/30,511 字符），大量冗余记忆是越权输出的根本诱因。决定先实现 Day 2 的 RAG 记忆压缩（314 条 → Top-5），观察效果后再实现 FormatGuard。预期 RAG 压缩后越权率下降 50-60%，FormatGuard 只需处理剩余问题。
 
-10. **时间加权 RAG 公式**：TAVO 的长记忆没有时间戳，但位置隐含时间顺序（开头的发生在前，后面的发生在后）。设计时间加权公式 `final_score = semantic × 0.6 + time_weight × 0.4`，其中 `time_weight = (insert_seq / max_seq)^γ`（γ=1.5 默认），确保最新记忆在检索中占优势。使用 `insert_seq` 绝对序列号而非归一化 `position`，避免增量更新时的全量重刷问题。
+10. **时间加权 RAG 公式**：`final_score = semantic × 0.6 + time_weight × 0.4`，`time_weight = (insert_seq / max_seq)^γ`（γ=1.5）。使用绝对序列号 `insert_seq` 避免增量更新时全量重刷。详见 Day 2 下午实现。
 
-11. **AURA 自建记忆数据库（替代依赖 TAVO）**：TAVO 的长记忆生成存在根本问题——无上下文总结、重复严重、质量不可控。决定 AURA 自建 SQLite + Chroma 数据库，从 TAVO 已有记忆作为"初始种子"导入，后续由 AURA 接管记忆的总结、存储、召回全流程。每 5 轮调用 LLM 总结一次，新记忆存入 Chroma。
+11. **记忆碎片化应对方案（不自动导入）**：用户可能绕过 AURA 直接连接 LLM（如切换 API），导致 AURA 本地数据库出现记忆断裂。经评估，自动导入 TAVO 长记忆会因无时间戳导致时序错乱（详见 Day 2 下午"不导入 TAVO"决策）。当前策略：接受此场景下的轻微体验损失，不自动导入。如未来需解决，可设计手动同步机制。
 
-12. **记忆碎片化应对方案**：用户可能绕过 AURA 直接连接 LLM（如切换 API），导致 AURA 本地数据库出现记忆断裂。应对策略：每次请求时对比 TAVO 的长记忆列表与 AURA 数据库，检测新增记忆并导入。这样即使中间有断裂，也能从 TAVO 侧恢复。
+> Day 2 详细实现方案见下文。
 
-13. **FormatGuard 优先级调低 — "RAG First" 策略**：分析发现长记忆占 Prompt 的 66%（20,000/30,511 字符），大量冗余记忆是越权输出的根本诱因。决定先做 RAG 记忆压缩，如果越权问题自然缓解，则 FormatGuard 不需要实现。FormatGuard 的详细三层设计（正则 Layer 1 + 语义 Layer 2 + Agent Layer 3）已在讨论中完成方案设计，但暂不写入执行计划，等 RAG 落地后评估是否需要。
 
 #### 验证结果（v0.5.0）
 
@@ -417,7 +492,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 - **2026-05-03 21:26:27 请求** — 区块化重组首次真实流程验证通过：
   - 拆解：长记忆=314条（标记定位），角色卡=3188字符（标记定位），对话=13轮
-  - 重组：原始 28,735 字符 → 重组后 **30,511 字符**（9 个区块，+1,776 字符）
+  - 重组：原始 28,735 字符 → 重组后 **30,511 字符**（8 个区块，+1,776 字符）
   - LLM 响应：✅ 200 OK，流式 315 chunks，605 字符
   - 保存文件：`prompt_dumps/prompt_20260503_212627.txt` + `reassembled_20260503_212628.txt`
   - 用户名动态提取：从对话第一条 user 消息 `"宋·格雷迈恩: *第二天魏思夏沫跟我出来*"` → 提取 `"宋·格雷迈恩"` ✅
@@ -441,7 +516,7 @@ TAVO 的长记忆生成方式存在根本问题：
 **架构决策**：使用 FAISS（IndexFlatL2）替代 ChromaDB
 - ChromaDB 在 Windows 上有严重的 native 依赖问题（chromadb_rust_bindings DLL 加载失败）
 - FAISS 纯 CPU 版本（faiss-cpu）安装简单，无 native 依赖冲突
-- 使用 LLM API（Kimi → DeepSeek 回退）生成 embedding，无需本地模型
+- 使用本地 `sentence-transformers` 模型（`all-MiniLM-L6-v2`，384维，~30MB）生成 embedding，无需调用 LLM API，离线可用
 - 持久化：FAISS 索引保存为 `faiss_index.bin`，元数据保存为 `faiss_meta.json`
 
 #### 上午：SQLite Schema（原始对话存储）
@@ -465,13 +540,13 @@ CREATE TABLE sessions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 动态状态（痛点 4）
+-- 动态状态（痛点 4）— 人物状态管理：位置/健康/情绪/行动能力等
 CREATE TABLE dynamic_state (
     session_id TEXT NOT NULL,
-    entity_name TEXT NOT NULL,    -- 角色/物品名
-    state_json TEXT NOT NULL,     -- {"status": "已生产", "location": "信号盒"}
+    entity_id TEXT NOT NULL,      -- 关联 entities.id
+    state_json TEXT NOT NULL,     -- {"location":"医务室","health":"产后虚弱","emotion":"抑郁+自责","action_capacity":20}
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (session_id, entity_name)
+    PRIMARY KEY (session_id, entity_id)
 );
 
 -- 剧情锚点（痛点 5）
@@ -484,16 +559,102 @@ CREATE TABLE plot_anchors (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 关系图谱（痛点 8）
-CREATE TABLE relationship_graph (
+-- ============================================================
+-- 关系图谱（痛点 7/8）— 完整 5 表网状结构
+-- ============================================================
+
+-- 1. 实体表（角色、派系、群体、user 代理）
+CREATE TABLE entities (
+    id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    source TEXT NOT NULL,
-    target TEXT NOT NULL,
-    relation_type TEXT,           -- 'family', 'friend', 'enemy', 'lover'
-    weight REAL DEFAULT 0.0,     -- -1.0 ~ 1.0
+    name TEXT NOT NULL,
+    aliases TEXT,                     -- JSON ["小红","Red"]
+    entity_type TEXT NOT NULL,        -- 'player' | 'npc' | 'faction' | 'group' | 'user_proxy'
+    identity_label TEXT,              -- 动态称谓："队长"、"叛徒"
+    canonical_relations TEXT,         -- JSON 官配模板
+    oc_attributes TEXT,               -- JSON {"age":17, "species":"Faunus"}
+    is_user_proxy BOOLEAN DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (session_id, source, target)
+    UNIQUE(session_id, name)
 );
+
+-- 2. 有向关系边（核心：多维、有向、动态）
+CREATE TABLE relationship_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES entities(id),
+    target_id TEXT NOT NULL REFERENCES entities(id),
+    dimension TEXT NOT NULL DEFAULT 'trust',
+    -- trust(信任) | romantic(浪漫) | duty(责任) | power(权力) | familiarity(熟悉度)
+    -- proprietary(占有欲) | rivalry(竞争) | gratitude(恩情) | guilt(亏欠)
+    source_to_target REAL DEFAULT 0.0,   -- source 对 target 的情感/态度
+    target_to_source REAL,               -- target 对 source 的情感/态度（nullable=未知）
+    label_forward TEXT,                  -- source 视 target 为 "最信任的搭档"
+    label_backward TEXT,                 -- target 视 source 为 "需要保护的人"
+    status TEXT DEFAULT 'active',        -- active | frozen | broken | rebuilding | dormant
+    provenance TEXT DEFAULT 'dialogue',  -- bootstrap | dialogue | user_override | inferred
+    confidence REAL DEFAULT 0.5,
+    established_at TIMESTAMP,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_count INTEGER DEFAULT 0,
+    visibility TEXT DEFAULT 'known_to_both',
+    -- known_to_both | secret_from_target | secret_from_source | known_to_group
+    visible_to_entities TEXT,            -- JSON ["entity_id_1", ...]
+    UNIQUE(session_id, source_id, target_id, dimension)
+);
+
+-- 3. 关系事件日志（回溯、审计、冲突检测）
+CREATE TABLE relationship_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    edge_id INTEGER REFERENCES relationship_edges(id),
+    round_number INTEGER NOT NULL,
+    event_type TEXT NOT NULL,            -- established | strengthened | weakened | broken | repaired | corrected | faded
+    delta_source_to_target REAL,
+    delta_target_to_source REAL,
+    old_status TEXT,
+    new_status TEXT,
+    trigger_text TEXT,                   -- 触发变化的原句
+    trigger_entity TEXT,                 -- 是谁的行为触发的
+    involving_third_party TEXT,          -- 第三方介入者
+    narrative_context TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. 群体/派系表
+CREATE TABLE relationship_clusters (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    cluster_type TEXT NOT NULL,       -- 'party' | 'faction' | 'family' | 'alliance' | 'rivalry'
+    entity_ids TEXT NOT NULL,         -- JSON ["ruby_rose", "weiss_schnee"]
+    cohesion REAL DEFAULT 0.0,
+    role_map TEXT,                    -- JSON {"ruby_rose":"leader"}
+    hierarchy_depth INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 5. 实体-群体归属表（多对多）
+CREATE TABLE entity_cluster_membership (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL REFERENCES entities(id),
+    cluster_id TEXT NOT NULL REFERENCES relationship_clusters(id),
+    join_reason TEXT,
+    join_at TIMESTAMP,
+    left_at TIMESTAMP,
+    membership_status TEXT DEFAULT 'active',
+    UNIQUE(session_id, entity_id, cluster_id)
+);
+
+-- 索引
+CREATE INDEX idx_edges_session ON relationship_edges(session_id);
+CREATE INDEX idx_edges_source ON relationship_edges(source_id);
+CREATE INDEX idx_edges_target ON relationship_edges(target_id);
+CREATE INDEX idx_events_session_round ON relationship_events(session_id, round_number);
+CREATE INDEX idx_entities_session ON entities(session_id);
 ```
 
 #### 下午：FAISS 向量记忆库 + 时间加权 RAG
@@ -503,27 +664,45 @@ CREATE TABLE relationship_graph (
 import faiss
 import numpy as np
 
-_dimension = 768  # 向量维度
+_dimension = 512  # BAAI/bge-small-zh-v1.5 输出维度
 index = faiss.IndexFlatL2(_dimension)  # L2 距离
 documents: List[str] = []   # 与索引对应的文档
 metadatas: List[dict] = []  # 与索引对应的元数据
 ```
 
-**Embedding 生成**（使用 LLM API，无需本地模型）：
+**Embedding 生成**（使用本地 `sentence-transformers` 模型）：
 ```python
+# 懒加载本地模型（首次调用时自动下载，~60MB）
+_embedding_model = None
+
+def _get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+    return _embedding_model
+
 async def _get_embedding(self, text: str) -> List[float]:
-    # 优先 Kimi（便宜），回退 DeepSeek
-    for provider in ["kimi", "deepseek"]:
-        try:
-            llm_config = get_llm_config(provider)
-            # 调用 /v1/embeddings API
-            response = await client.post(embed_url, json=payload)
-            return response["data"][0]["embedding"]
-        except:
-            continue
-    # 都不可用时返回零向量（语义排序退化为纯时间排序，不阻断流程）
-    return [0.0] * self._dimension
+    """使用本地模型生成 embedding（512维）"""
+    try:
+        model = _get_embedding_model()
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            None,
+            lambda: model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+        )
+        return embedding.tolist()
+    except Exception as e:
+        logger.error(f"[AURA→向量] 本地 embedding 模型失败: {e}")
+        return [0.0] * self._dimension
 ```
+
+> **为什么用本地模型而非 LLM API？**
+> - Kimi 和 DeepSeek 均**无官方 embedding API**
+> - `BAAI/bge-small-zh-v1.5` 是开源中文优化模型（~60MB），首次运行时自动下载并缓存
+> - 512 维向量，CPU 上推理极快（~20-30ms），无网络延迟
+> - 专门针对中文语义优化，RP 场景以中文召回为主（用户输入 + AURA 总结记忆）
+> - 模型加载失败时返回零向量，语义排序退化为纯时间排序，不阻断流程
 
 **记忆存储策略：AURA 自建记忆，不导入 TAVO**
 
@@ -592,6 +771,335 @@ async def search(self, query: str, top_k: int = 5) -> List[str]:
 - Embedding API 全挂时返回零向量（语义排序退化为纯时间排序，不阻断流程）
 - Kimi 未配置 → 跳过自动总结，不影响主流程
 
+---
+
+**📌 意图感知 RAG（Intent-Aware RAG）—— RP 场景的核心改进**
+
+> 经讨论确认：RP 场景下，**字面 RAG 大概率召回无关内容**。用户输入 `*我点了一支烟*` 的字面语义是"烟草/点燃"，但真实意图是"请渲染他人反应、环境氛围、剧情张力"。传统 embedding 检索召回的是"点烟相关记忆"，而用户需要的是"社交张力相关记忆"。**不解决这个问题，RAG 召回不如不召回。**
+
+**RP 场景的记忆类型分层**：
+
+| 记忆类型 | 内容 | 检索方式 |
+|---------|------|---------|
+| **事实记忆** | 谁做了什么、在哪里 | 原始查询字面匹配 |
+| **氛围记忆** | 场景张力、情绪基调、沉默压力 | **意图修正查询匹配（核心）** |
+| **关系记忆** | 角色间当前状态 | `[CHARACTER_SITUATION]` 直接注入 |
+| **剧情模板** | 类似场景的发展模式、动作→反应的套路 | **意图修正查询匹配（核心）** |
+
+**意图感知 RAG 流程**：
+
+```mermaid
+graph LR
+    A[用户输入<br/>*我点了一支烟*] --> B[IntentTagger<br/>轻量LLM]
+    B --> C[意图解析]
+    C --> D1[原始查询<br/>保底召回事实记忆]
+    C --> D2[修正查询<br/>召回氛围记忆+剧情模板]
+    C --> D3[场景关键词<br/>召回关系上下文]
+    D1 --> E[多路召回]
+    D2 --> E
+    D3 --> E
+    E --> F[基于意图相关度重排]
+    F --> G[Top-5 注入主LLM]
+```
+
+**IntentTagger → RAG 查询扩展器**：
+
+```python
+async def intent_aware_search(self, user_input: str, context: dict, top_k: int = 5) -> List[str]:
+    """意图感知 RAG：先解析意图，再生成多路查询，最后合并重排"""
+    
+    # Step 1: IntentTagger 解析用户输入的真实意图
+    intent = await self.intent_tagger.analyze(user_input, context)
+    # 返回: {input_type, user_expectation, confidence, implicit_instruction,
+    #        scene_keyword, emotional_tone, tension_level}
+    
+    # Step 2: 生成三路查询
+    queries = []
+    
+    # 路 1: 原始查询（保底，召回事实记忆）
+    queries.append({"query": user_input, "weight": 0.3, "type": "literal"})
+    
+    # 路 2: 意图修正查询（核心，召回氛围记忆+剧情模板）
+    # 例: "角色在紧张谈判中通过小动作释放压力，寻找其他角色对此类行为的反应模式"
+    if intent.confidence > 0.6:
+        implicit_query = await self.query_expander.expand(user_input, intent)
+        queries.append({"query": implicit_query, "weight": 0.5, "type": "intent"})
+    
+    # 路 3: 场景关键词查询（召回关系上下文）
+    if intent.scene_keyword:
+        queries.append({"query": intent.scene_keyword, "weight": 0.2, "type": "scene"})
+    
+    # Step 3: 多路召回
+    all_results = []
+    for q in queries:
+        results = await self._faiss_search(q["query"], top_k=3)
+        for r in results:
+            all_results.append({"memory": r, "source_weight": q["weight"], "type": q["type"]})
+    
+    # Step 4: 基于意图相关度重排
+    # 优先保留 intent 类型召回的结果，其次 scene，最后 literal
+    ranked = sorted(all_results,
+        key=lambda x: (x["source_weight"] * self._intent_relevance_score(x["memory"], intent)),
+        reverse=True)
+    
+    # 去重后返回 Top-K
+    seen = set()
+    final = []
+    for item in ranked:
+        if item["memory"] not in seen:
+            seen.add(item["memory"])
+            final.append(item["memory"])
+        if len(final) >= top_k:
+            break
+    return final
+```
+
+**IntentTagger 输出示例**：
+
+```json
+{
+  "input_type": "纯动作",
+  "user_expectation": "B",
+  "confidence": 0.85,
+  "implicit_instruction": "用户已完成'点烟'动作，请渲染房间内其他角色对此的反应、环境氛围变化，不要替用户生成后续动作。",
+  "scene_keyword": "谈判僵局 动作打破沉默",
+  "emotional_tone": "压抑中寻求突破",
+  "tension_level": 0.7
+}
+```
+
+**QueryExpander 生成的修正查询示例**：
+
+| 用户输入 | 修正后查询 |
+|---------|-----------|
+| `*我点了一支烟*` | `角色在紧张谈判中通过小动作释放压力，寻找其他角色对此类行为的反应模式` |
+| `*叹气* 算了...` | `角色表现出退让情绪后，对方的追问模式或安慰行为` |
+| `*我转身离开房间*` | `离别场景的氛围渲染，门关上后的回声，角色追出去的冲动` |
+| `"你觉得怎么样？"` | `基于角色性格与当前关系的真实回答模式，非敷衍回应` |
+
+**与现有架构的融合点**：
+
+- **Day 3 LangGraph**：`IntentTagger` 节点位于 `InputReceive` 之后、`MemoryRetrieve` 之前；`MemoryRetrieve` 节点从单路查询升级为**"修正查询粗排 + 标签精排 + 时间加权"**
+- **AgentState 新增字段**：
+  - `intent_rag_queries: List[str]` — 意图修正后的查询列表
+  - `intent_tags: List[{category, label, embedding}]` — 用户输入标签（用于召回时标签匹配）
+- **Day 2 现有 RAG**：保留时间加权 + 动态归一化，叠加标签驱动语义召回层
+- **成本**：每轮额外一次轻量 LLM 调用（~300 tokens 输入 / ~150 tokens 输出，约 0.03-0.05 元）
+
+**关键回退策略**：
+- `confidence < 0.6` → 跳过意图修正，直接使用原始查询（避免低置信度误推断）
+- IntentTagger API 失败 → 降级为原始查询，不阻断主流程
+- 修正查询召回结果为空 → 兜底使用原始查询结果
+
+**📌 标签驱动的语义召回（Tag-Embedding RAG）—— 通用化的意图匹配**
+
+> 经讨论确认：仅靠 **embedding 字面相似度** 无法解决 RP 场景的语义鸿沟问题。用户输入 `*我点了一支烟*` 的 embedding 是"烟草/点燃/动作"，但 LLM 需要生成的是"他人反应+氛围渲染"——两者语义空间不同。**标签体系的作用是在入库时就为记忆打上"行为模式"和"场景氛围"的语义标记，召回时从"用户行为"跳到"角色反应模式"。**
+>
+> 关键设计：**标签不限定枚举值，由 LLM 自由生成自然语言短语，通过标签自身的 embedding 做软匹配**。这样无论世界观是奇幻、校园还是科幻，标签都能自适应。
+
+**为什么 embedding 字面匹配不够？**
+
+| 用户输入 | embedding 字面语义 | 真实需求 | 需要召回的记忆 |
+|---------|------------------|---------|-------------|
+| `*我点了一支烟*` | 烟草、点燃、动作 | 渲染他人反应+氛围 | "Weiss 打翻酒杯，全场寂静..." |
+| `*叹气* 算了...` | 叹息、放弃 | 对方的追问或安慰 | "Ruby 低下头：'好吧...'" |
+| `"你觉得怎么样？"` | 询问、意见 | 基于关系的真实回答 | "Ruby 认真地看着你：'我相信你'" |
+
+问题：用户输入的 embedding 和需要召回的记忆文本的 embedding **语义空间完全不同**，纯向量检索会召回"以前有没有点烟"而非"打破沉默时他人的反应"。
+
+**标签设计原则：自由标签 + embedding 软匹配**
+
+不预设枚举值（如 `[宿舍私聊/谈判僵局/...]`），而是让 LLM 根据内容**自由生成自然语言短语**，每个标签独立做 embedding，召回时比较语义相似度。
+
+```json
+{
+  "memory_text": "信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang...",
+  "embedding": [0.12, -0.05, ...],
+  "tags": [
+    {"category": "scene_atmosphere", "label": "宿舍夕阳下的温情告别", "embedding": [...]},
+    {"category": "behavior_pattern", "label": "承诺与保护宣言", "embedding": [...]},
+    {"category": "emotional_tone", "label": "坚定中带着不安", "embedding": [...]},
+    {"category": "entities", "label": "Ruby, Yang", "embedding": [...]},
+    {"category": "pacing", "label": "慢节奏深情对话", "embedding": [...]}
+  ]
+}
+```
+
+**标签 category 定义（通用，不限世界观）**：
+
+| category | 作用 | 示例 |
+|----------|------|------|
+| `scene_atmosphere` | 场景氛围 + 环境 + 时空背景 | "黄昏房间里的沉默"、"宴会厅的紧张对峙"、"战后废墟的寂寥" |
+| `behavior_pattern` | 核心行为模式 | "用小动作打破沉默"、"承诺与保护宣言"、"试探性靠近"、"赌气式离开" |
+| `emotional_tone` | 情绪基调 | "压抑中寻求突破"、"坚定中带着不安"、"甜蜜却心虚" |
+| `entities` | 涉及角色 | "Ruby, Yang, user"、"Weiss" |
+| `pacing` | 节奏感 | "慢节奏深情对话"、"快节奏连续动作"、"停顿后爆发" |
+
+> **为什么 5 个 category 就够了？** RP 场景的核心是"谁在什么氛围下做了什么行为，情绪如何，节奏怎样"。5 个维度覆盖了从"场景"到"行为"到"情绪"到"节奏"的完整语义链。
+
+**入库标签提取（入库时自动打标签）**
+
+**时机**：`summarize_and_store()` 中，Kimi 总结完记忆后、入库前增加一步标签提取。
+
+**Prompt（标签提取器）**：
+```
+请分析以下剧情记忆，提取 3-5 个结构化标签。
+
+要求：
+1. 每个标签由 category + label 组成，category 必须从 [scene_atmosphere/behavior_pattern/emotional_tone/entities/pacing] 中选择
+2. label 用**自然语言短语**自由描述，不要受限于固定词汇，要准确捕捉记忆的"氛围"和"行为模式"
+3. 重点提取"如果用户做出类似行为，应该召回这段记忆"的语义特征
+
+记忆：{memory_text}
+
+输出JSON数组：
+[
+  {"category": "scene_atmosphere", "label": "..."},
+  {"category": "behavior_pattern", "label": "..."},
+  {"category": "emotional_tone", "label": "..."}
+]
+```
+
+**入库示例**：
+
+```json
+{
+  "memory_text": "雪倪庄园宴会。Weiss在众目睽睽之下故意打翻酒杯，红酒洒在地毯上。全场寂静，她却没有道歉，只是冷冷地看着对面的叔父。",
+  "tags": [
+    {"category": "scene_atmosphere", "label": "宴会厅的紧张对峙，众目睽睽之下的公开挑战"},
+    {"category": "behavior_pattern", "label": "用破坏性小动作表达反抗，打破表面和平"},
+    {"category": "emotional_tone", "label": "冷峻下的愤怒，以沉默代替爆发"},
+    {"category": "entities", "label": "Weiss, 叔父"},
+    {"category": "pacing", "label": "先慢后快，小动作引发大反应"}
+  ]
+}
+```
+
+**用户输入标签（IntentTagger 扩展）**
+
+IntentTagger 解析用户输入时，**同时输出标签**，标签空间和入库标签完全一致。
+
+```json
+{
+  "input_type": "ACTION_ONLY",
+  "user_expectation": "B",
+  "confidence": 0.85,
+  "implicit_instruction": "用户已完成'点烟'动作，请渲染他人反应...",
+  "tags": [
+    {"category": "scene_atmosphere", "label": "黄昏房间里的沉默"},
+    {"category": "behavior_pattern", "label": "用点烟打破沉默"},
+    {"category": "emotional_tone", "label": "压抑中寻求突破"},
+    {"category": "entities", "label": "user"},
+    {"category": "pacing", "label": "停顿后的小动作"}
+  ]
+}
+```
+
+**召回匹配机制：标签 embedding 相似度 + 修正查询 embedding + 时间加权**
+
+召回不是单纯比较标签字符串是否相等，而是比较**标签 label 的 embedding 语义相似度**。
+
+```python
+async def tag_aware_search(self, user_input: str, intent: IntentResult, top_k: int = 5) -> List[str]:
+    """标签驱动的语义召回：标签embedding软匹配 + 修正查询embedding + 时间加权"""
+    
+    # Step 1: 生成用户输入的修正查询 embedding
+    corrected_query = intent.corrected_query  # "角色在紧张谈判中通过小动作释放压力..."
+    query_emb = await self._get_embedding(corrected_query)
+    
+    # Step 2: FAISS 粗排：用修正查询做 embedding 检索，取 Top-20
+    candidate_indices = await self._faiss_search(query_emb, top_k=20)
+    
+    # Step 3: 标签精排：对候选记忆，计算标签匹配度
+    scored = []
+    for idx in candidate_indices:
+        memory = self.memories[idx]
+        
+        # 3a: 修正查询的语义相似度
+        semantic_score = cosine_similarity(query_emb, memory.embedding)
+        
+        # 3b: 标签匹配度（category 相同的标签比较 embedding 相似度）
+        tag_score = 0.0
+        for user_tag in intent.tags:
+            for mem_tag in memory.tags:
+                if user_tag.category == mem_tag.category:
+                    sim = cosine_similarity(user_tag.embedding, mem_tag.embedding)
+                    tag_score += sim  # 累加所有同 category 的相似度
+        tag_score = min(tag_score / len(intent.tags), 1.0)  # 归一化
+        
+        # 3c: 时间权重
+        time_weight = (memory.insert_seq / max_seq) ** gamma
+        
+        # 复合排序
+        final_score = semantic_score * 0.4 + tag_score * 0.4 + time_weight * 0.2
+        scored.append((final_score, idx))
+    
+    # Step 4: 排序取 Top-K
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [self.memories[idx] for _, idx in scored[:top_k]]
+```
+
+**召回示例**：
+
+| 用户输入 | 用户标签 | 召回的记忆 | 记忆标签 | 匹配逻辑 |
+|---------|---------|-----------|---------|---------|
+| `*我点了一支烟*` | behavior=用点烟打破沉默 | "Weiss 打翻酒杯，全场寂静..." | behavior=用破坏性小动作表达反抗 | 标签 embedding 相似度高（都是"用动作打破沉默"） |
+| `*叹气* 算了...` | emotional=压抑中寻求突破 | "Ruby 低下头：'好吧...'" | emotional=无奈中的妥协 | 标签 embedding 相似度高 |
+| `"你觉得怎么样？"` | behavior=试探性询问 | "Ruby 认真地看着你：'我相信你'" | behavior=认真回应信任 | 修正查询 embedding 匹配 + entities 重叠 |
+
+**与现有架构的融合点**：
+
+| 现有模块 | 修改 |
+|---------|------|
+| `summarize_and_store()` | 入库前增加 `_extract_tags()`，为每条记忆生成 3-5 个标签 + 标签 embedding |
+| `IntentTagger.analyze()` | 输出中增加 `tags` 字段，和用户输入同步打标签 |
+| `search()` | 从单路 embedding 检索升级为**"修正查询粗排 + 标签精排 + 时间加权"** |
+| FAISS `metadata` | 新增 `tags` 字段，存储 `List[{category, label, embedding}]` |
+| 成本 | 入库时额外一次轻量 LLM 调用（标签提取，~200 tokens）；召回时无额外 LLM 调用 |
+
+**关键设计决策**：
+
+| 问题 | 决策 | 理由 |
+|------|------|------|
+| 标签是硬枚举还是自由生成？ | **自由生成自然语言短语** | 通用，不限世界观，不同 RP 场景自适应 |
+| 标签匹配是字符串相等还是语义相似？ | **标签 embedding 语义相似** | "用点烟打破沉默"和"用动作打破沉默"语义相近但不等字 |
+| 标签 category 有几个？ | **5 个固定 category** | 覆盖 RP 核心语义维度，category 固定保证召回时对齐 |
+| 标签权重 vs embedding 权重？ | **标签 0.4 + 查询 embedding 0.4 + 时间 0.2** | 标签保行为模式精准，embedding 保语义泛化，时间保新鲜 |
+| 标签存在哪里？ | **FAISS metadata + 独立 JSON** | 召回时读取 metadata 中的标签 embedding |
+
+**三层记忆架构（v0.8.0）**
+
+AURA 采用 **3 层记忆层级**，在 Prompt 中形成从近到远、从精确到语义的记忆梯度：
+
+| 层级 | 区块 | 范围 | 注入方式 | 作用 |
+|------|------|------|---------|------|
+| **工作记忆** | `[WORKING_MEMORY]` | 最近 5 轮对话（10 条消息） | 原始对话直通 | 保留即时上下文、标记格式、发言节奏 |
+| **近期记忆** | `[RECENT_MEMORY]` | 最近 10 条 AURA 总结化记忆（约 30+ 轮对话） | 按 `insert_seq` 逆序取最新 10 条，**不经过 RAG** | 保证高频上下文的下限，避免 RAG 误过滤 |
+| **深度记忆** | `[LONG_TERM_MEMORY]` | 10 条之外的旧记忆 | 意图感知 RAG 多路召回 Top-5 | 召回与当前场景语义相关的老事件、氛围、剧情模板 |
+
+> **为什么分三层？**
+> - **WORKING_MEMORY** 压缩到 5 轮：TAVO 原生拼 12 轮太长，5 轮足以保留即时上下文，减少冗余
+> - **RECENT_MEMORY** 直通 10 条：最近 10 条总结化记忆覆盖约 30+ 轮对话，是高频上下文，RAG 反而增加误过滤风险
+> - **LONG_TERM_MEMORY** 意图感知 RAG：10 条之外的深度记忆用修正查询召回氛围记忆和剧情模板，避免字面匹配召回无关内容
+> - 三层形成梯度：**原始对话 → 总结化记忆 → 语义召回**，既保证下限又减少噪声
+
+**[RECENT_MEMORY] 注入示例**：
+```
+[RECENT_MEMORY]
+== 近期事件（最近 10 条，直通）==
+[recall_memory: 信标学院宿舍。Ruby 坚定地看着 Yang："我绝对不会丢下你的。"]
+[recall_memory: 医务室走廊。Weiss 拦住 Ruby，两人发生短暂争执，最终 Ruby 推门而入。]
+...
+
+[LONG_TERM_MEMORY]
+== 深度记忆（意图感知 RAG 召回）==
+[recall_memory: 雪倪庄园宴会。Weiss 首次向 Ruby 敞开心扉，谈及家族压力...]
+...
+```
+
+> **为什么先做意图修正再做 RAG？**
+> RP 不是信息检索，是**情感共振**。用户的输入是"场景暗示"而非"完整指令"。IntentTagger 的作用就是把"用户心里的真实问题"翻译成"RAG 能理解的查询语言"，否则召回的是字面相关的垃圾记忆，反而污染主 LLM 的注意力。
+
 #### 晚上：MemoryManager 封装 + 接入转发流程
 
 `app/memory/manager.py`：
@@ -632,16 +1140,26 @@ class MemoryManager:
         """获取当前会话的轮次编号（自动递增）"""
 ```
 
-**接入 completions_simple.py 转发流程**：
+**接入 completions_simple.py 转发流程（v0.8.0 更新：三层记忆 + 意图感知 RAG）**：
 ```
 TAVO 请求 → 拆解 System Prompt
-  → FAISS 时间加权召回 Top-5（以当前用户输入为 query）
-  → 注入 [LONG_TERM_MEMORY] 区块（仅 Top-5，非全量）
-  → 区块重组 → 转发 LLM
+  → 提取 WORKING_MEMORY（最近 5 轮对话，10 条消息）
+  → 提取 RECENT_MEMORY（FAISS 按 insert_seq 逆序取最新 10 条，直通注入）
+  → IntentTagger 解析用户输入意图（轻量 LLM）
+    → 生成三路查询：原始查询 + 修正查询 + 场景关键词
+  → FAISS 意图感知召回 Top-5（排除已直通的最近 10 条，多路查询合并 + 基于意图重排）
+  → 注入 [LONG_TERM_MEMORY] 区块（深度记忆，仅 Top-5）
+  → 区块重组（9 区块）→ 转发 LLM
   → LLM 返回后，保存本轮对话到 SQLite
   → 每 5 轮调用 Kimi 总结一次（异步，不阻塞）
   → 新记忆向量化存入 FAISS
 ```
+
+> **v0.8.0 关键变更**：
+> 1. **新增 `[RECENT_MEMORY]` 直通层**：最近 10 条总结化记忆不经过 RAG，直接注入，保证高频上下文下限
+> 2. **`[WORKING_MEMORY]` 压缩为 5 轮**：从 TAVO 原生 12 轮压缩到 5 轮（10 条消息），减少近期对话冗余
+> 3. **`[LONG_TERM_MEMORY]` 聚焦深度记忆**：仅召回 10 条之外的旧记忆，意图感知 RAG 避免字面匹配召回无关内容
+> 4. 形成 **3 层记忆梯度**：WORKING_MEMORY（原始对话）→ RECENT_MEMORY（总结化记忆直通）→ LONG_TERM_MEMORY（意图感知语义召回）
 
 **🎯 验收标准**：
 1. RAG 召回：根据用户输入语义召回 Top-5，结果中包含相关记忆 ✅
@@ -649,7 +1167,7 @@ TAVO 请求 → 拆解 System Prompt
 3. 增量更新：新对话产生后，Kimi 总结出叙述化记忆并存入 FAISS ✅
 4. 硬失败：FAISS 初始化失败直接抛异常，不降级 ✅
 5. 持久化：服务重启后 FAISS 索引 + _next_seq 自动恢复 ✅
-6. Prompt 变化：`[LONG_TERM_MEMORY]` 从全量（~20,000 字符）→ Top-5（~300 字符）✅
+6. Prompt 变化：`[LONG_TERM_MEMORY]` 从全量（~20,000 字符）→ `[RECENT_MEMORY]` 直通 10 条 + `[LONG_TERM_MEMORY]` 意图感知 RAG Top-5（合计 ~800 字符）✅
 
 ---
 
@@ -673,39 +1191,82 @@ TAVO 请求 → 拆解 System Prompt
 | 12 | **模型输出太多** | ⚠️ 间接缓解 | Prompt 精简后，LLM 更聚焦当前场景，减少无关输出。但根本解决依赖 Week 2 的 ResponseLengthGuard |
 | 13 | **系统提示词锁不住** | ❌ 无影响 | System prompt 遵循度是模型对齐问题，与记忆长度无关 |
 | 14 | **时间维度缺失 → 已完成事件重复生成** | ⚠️ 部分缓解 | FAISS 时间加权 `position` 让最新记忆优先召回，但精确时间戳和时序标记仍需 Week 3 完善 |
+| 15 | **用户输入意图隐含 → LLM 默认接话而非渲染反应** | ✅ **显著缓解** | 意图感知 RAG 通过 IntentTagger 先解析用户真实意图，再生成修正查询召回氛围记忆和剧情模板。避免字面 embedding 召回"点烟相关记忆"而错过"社交张力相关记忆" |
 
-**总结**：RAG 记忆压缩可以**解决/缓解 8 个痛点**（1, 4, 5, 6, 8, 9, 10, 14），其中痛点 9/10 是根本解决，痛点 1 是显著缓解。剩余 6 个痛点（2, 3, 7, 11, 12, 13）需要 Week 2-3 的专门质量控制层来处理。
+**总结**：RAG 记忆压缩 + 意图感知可以**解决/缓解 9 个痛点**（1, 4, 5, 6, 8, 9, 10, 14, 15），其中痛点 9/10 是根本解决，痛点 1/15 是显著缓解。剩余 6 个痛点（2, 3, 7, 11, 12, 13）需要 Week 2-3 的专门质量控制层来处理。
 
 ---
 
-### Day 3｜LangGraph 核心状态机 + 模型方言编译器
+### Day 3｜LangGraph 核心状态机 + 模型方言编译器 + 关系图谱注入（v0.8.0 更新）
 
-**目标**：13节点状态图跑通，支持循环回退，状态持久化，有可视化。**核心新增：模型方言编译器（ModelDialectCompiler）节点，将标准化区块编译为目标模型专属指令。**
+**目标**：14节点状态图跑通，支持循环回退，状态持久化，有可视化。**核心新增：模型方言编译器 + 关系图谱 BFS 子图提取 + CHARACTER_SITUATION 融合渲染。**
 
-#### 上午：状态图设计
+#### 上午：状态图设计（v0.8.0 更新）
 节点（执行顺序）：
-1. **InputReceive** — 收输入，读Redis最近N轮
-2. **EmotionAnalyze** — 情绪走向（mock）
-3. **MemoryDecision** — 查记忆吗？（mock）
-4. **MemoryRetrieve** — 检索：工作记忆+情节记忆+主线锚点（mock）
-5. **StateManager** — 加载dynamic_state注入prompt（痛点4骨架）
-6. **StyleInjection** — 结构随机化 + mes_example多样化，打破输出模板化（mock）
-7. **ModelDialectCompiler** — **模型方言编译器（核心新增）**：将标准化区块 Prompt 编译为目标模型（DeepSeek/Gemini/Qwen）的最优指令格式
-8. **ContextAssemble** — 组装：人设+动态状态+主线锚点+唤醒记忆+工作记忆+风格约束+**模型专属编译后指令**
-9. **LLMGenerate** — 调用LLM（mock）
-10. **FormatGuard** — 越权输出检测（痛点1骨架）
-11. **OOCCheck** — 人设一致性（mock）
-12. **ContentFilter** — 文风污染过滤（mock）
-13. **OutputReturn** — 返回客户端
-14. **MemoryExtract** — 提取事件+状态变更，更新记忆库（mock）
+1. **InputReceive** — 收输入，读 SQLite 最近 5 轮对话
+2. **EntityExtract** — **实体识别（新增）**：从用户输入 + 最近 3 轮对话提取活跃实体（显式提及 + 代词解析 + 场景推断）
+3. **EmotionAnalyze** — 情绪走向（mock）
+4. **MemoryDecision** — 查记忆吗？（mock）
+5. **MemoryRetrieve** — 检索：工作记忆 + 情节记忆 + 主线锚点 + **关系子图（新增）**
+   - FAISS 召回 Top-5 记忆
+   - **RelationshipManager BFS 子图提取（新增）**：以活跃实体为起点，max_distance=2，max_edges=12，visibility 过滤
+6. **StateManager** — 加载 `dynamic_state` + **合并 relationship_subgraph 渲染为 `CHARACTER_SITUATION`（新增）**
+   - 不再只注入 `[state: 实体=状态]`，而是融合为"角色导演笔记"
+7. **StyleInjection** — 结构随机化 + mes_example 多样化，打破输出模板化（mock）
+8. **ModelDialectCompiler** — **模型方言编译器**：将标准化区块 Prompt 编译为目标模型（DeepSeek/Gemini/Qwen）的最优指令格式
+9. **ContextAssemble** — 组装：`[PROTOCOL]` + `[CONSTRAINTS]` + `[CHARACTER_CARD]` + **`[CHARACTER_SITUATION]`** + `[WORKING_MEMORY]` + **`[RECENT_MEMORY]`** + `[LONG_TERM_MEMORY]` + `[WORLD_CONTEXT]` + `[OUTPUT_SPEC]`
+10. **LLMGenerate** — 调用 LLM（mock）
+11. **FormatGuard** — 越权输出检测 + **关系一致性检测（新增）**：检测输出是否违背 `CHARACTER_SITUATION` 中的关系参数
+12. **OOCCheck** — 人设一致性（mock）
+13. **ContentFilter** — 文风污染过滤（mock）
+14. **OutputReturn** — 返回客户端
+15. **MemoryExtract** — 提取事件 + 状态变更 + **`relationship_delta`（新增）**，更新记忆库与关系图谱
 
 边（条件）：
-- FormatGuard/OOCCheck/ContentFilter通过 → OutputReturn → MemoryExtract → 结束
-- 任一不通过 → **ModelDialectCompiler（加约束标记 + 调整编译策略）** → LLMGenerate（retry_count+1，最多2次）
+- FormatGuard/OOCCheck/ContentFilter 通过 → OutputReturn → MemoryExtract → 结束
+- 任一不通过 → **ModelDialectCompiler（加约束标记 + 调整编译策略）** → LLMGenerate（retry_count+1，最多 2 次）
+
+**关系图谱在状态机中的数据流**：
+
+```
+[InputReceive] 用户输入: "Ruby，Yang 去哪了？"
+    │
+    ▼
+[EntityExtract] 活跃实体: {user, Ruby, Yang}
+    │
+    ▼
+[MemoryRetrieve] ──→ FAISS 召回记忆
+    │               └──→ RelationshipManager.get_relationship_context(
+    │                       active_entity_ids=[user, Ruby, Yang],
+    │                       current_speaker_id=Ruby,
+    │                       max_distance=2,
+    │                       max_edges=12
+    │                   ) → RelationshipSubgraph
+    │
+    ▼
+[StateManager] 合并: dynamic_state + relationship_subgraph → CHARACTER_SITUATION
+    │
+    ▼
+[ContextAssemble] 注入 Prompt 区块（含 [CHARACTER_SITUATION]）
+    │
+    ▼
+[LLMGenerate] 模型生成回复
+    │
+    ▼
+[FormatGuard] 质检:
+    - 越权检测（原有）
+    - 关系一致性检测（新增）: Ruby→user romantic=0.85，但输出中 Ruby 对 user 冷淡疏远 → 不通过
+    │
+    ▼ (通过)
+[MemoryExtract] 提取:
+    - 事件 → FAISS
+    - state_changes → dynamic_state
+    - relationship_delta → relationship_edges（如 "Ruby 和 user 拥抱" → romantic +0.05）
+```
 
 #### 模型方言编译器节点详细设计
 
-**输入**：标准化 9 区块（`[PROTOCOL]`, `[CONSTRAINTS]`, `[CHARACTER_CARD]`, `[DYNAMIC_STATE]`, `[WORKING_MEMORY]`, `[RAG_EPISODIC]`, `[WORLD_CONTEXT]`, `[OUTPUT_SPEC]`）
+**输入**：标准化 **9 区块**（`[PROTOCOL]`, `[CONSTRAINTS]`, `[CHARACTER_CARD]`, **`[CHARACTER_SITUATION]`**, `[WORKING_MEMORY]`, **`[RECENT_MEMORY]`**, `[LONG_TERM_MEMORY]`, `[WORLD_CONTEXT]`, `[OUTPUT_SPEC]`）
 **输出**：针对目标模型的重组后 Prompt 字符串
 
 **编译流程**：
@@ -714,14 +1275,16 @@ TAVO 请求 → 拆解 System Prompt
   → 选择模型策略（DeepSeek/Gemini/Qwen/...）
   → 应用 Priming（模型专属开头引导语）
   → 转换约束表达方式（直接禁令 vs 元角色伪装 vs XML 标签）
+  → 转换 [CHARACTER_SITUATION] 注入格式（自然语言段落 vs 结构化列表 vs XML 块）
   → 转换记忆注入格式（时间线 vs 列表 vs XML 块）
-  → 追加输出规范（长度限制/反抢戏/格式标记）
+  → 追加输出规范（长度限制/反抢戏/格式标记/**关系遵循规则**）
   → 输出最终 Prompt
 ```
 
 **Retry 时的编译策略调整**：
-- 第1次生成后若 FormatGuard 失败 → 在 `[CONSTRAINTS]` 中追加更强约束 + 切换为元角色伪装风格
-- 第2次生成后若仍失败 → 在 `[OUTPUT_SPEC]` 中追加"逐条自检"COT指令 + 缩短输出长度限制
+- 第 1 次生成后若 FormatGuard 失败 → 在 `[CONSTRAINTS]` 中追加更强约束 + 切换为元角色伪装风格
+- 第 1 次生成后若**关系一致性检测失败** → 在 `[CHARACTER_SITUATION]` 中追加"**当前发言者必须遵守的关系参数**"高亮 + 在 `[OUTPUT_SPEC]` 中追加逐条自检
+- 第 2 次生成后若仍失败 → 在 `[OUTPUT_SPEC]` 中追加"逐条自检"COT 指令 + 缩短输出长度限制
 
 > **关键决策 — 流式传输架构调整**：由于流式传输的"不可撤回"特性（已发送到 TAVO 的内容无法收回），AURA 采用 **"先完整生成 → 质检 → 再流式返回"** 策略：
 > - LLM 请求使用非流式模式（或 AURA 内部聚合流式响应）
@@ -730,10 +1293,36 @@ TAVO 请求 → 拆解 System Prompt
 > - 用户感知到的是"稍慢但完美的回复"，而非"快速但越权的回复"
 > - **对于重度 RP 用户，10-30 秒的等待换取 Sonnet 级别的沉浸体验，是完全可接受的**
 
-#### 下午：LangGraph实现
-1. `AgentState` TypedDict：`messages, character, session_id, memory_decision, retrieved_memories, dynamic_state, ooc_passed, format_passed, content_passed, retry_count, target_model, dialect_strategy`
-2. `StateGraph`定义14节点和条件边（含 ModelDialectCompiler）
-3. `checkpointer`：`MemorySaver`或`RedisSaver`
+#### 下午：LangGraph 实现（v0.8.0 更新）
+1. `AgentState` TypedDict：
+   ```python
+   class AgentState(TypedDict):
+       messages: List[BaseMessage]
+       session_id: str
+       character: str
+       
+       # 记忆相关
+       memory_decision: bool
+       retrieved_memories: List[str]
+       
+       # ===== 关系图谱状态（v0.7.0 新增）=====
+       active_entity_ids: List[str]              # 当前活跃实体
+       relationship_subgraph: RelationshipSubgraph  # 召回的关系子图
+       relationship_context_str: str             # 渲染后的 [CHARACTER_SITUATION] 字符串
+       
+       # 状态与质检
+       dynamic_state: Dict[str, Any]
+       ooc_passed: bool
+       format_passed: bool
+       content_passed: bool
+       retry_count: int
+       
+       # 模型方言编译
+       target_model: str
+       dialect_strategy: str
+   ```
+2. `StateGraph` 定义 15 节点和条件边（含 ModelDialectCompiler + EntityExtract + RelationshipSubgraph）
+3. `checkpointer`：`MemorySaver` 或 `RedisSaver`（`relationship_subgraph` 作为状态的一部分被自动持久化）
 4. 编译：`app = workflow.compile()`
 
 #### 晚上：接口打通 + 日志 + 可视化
@@ -741,11 +1330,12 @@ TAVO 请求 → 拆解 System Prompt
 2. structlog每节点打印：名称、耗时、状态摘要、**模型方言策略**
 3. mermaid状态图：`docs/state_diagram.md`
 
-**🎯 验收标准**：
-- curl发消息，日志显示完整链路：`InputReceive → ... → ModelDialectCompiler → ... → OutputReturn`
-- 同session_id发第二条，状态延续（thread_id正确）
-- `docs/state_diagram.md`有mermaid图
-- **模型方言编译验证**：分别用 DeepSeek / Gemini / Qwen 发送相同请求，验证生成的 Prompt 结构不同（Priming 风格、约束表达方式、输出规范均有差异）
+**🎯 验收标准（v0.7.0 更新）**：
+- curl 发消息，日志显示完整链路：`InputReceive → EntityExtract → MemoryRetrieve(RelationshipSubgraph) → StateManager(CHARACTER_SITUATION) → ... → OutputReturn`
+- 同 session_id 发第二条，状态延续（thread_id 正确），**relationship_subgraph 跨轮次保持**
+- `docs/state_diagram.md` 有 mermaid 图，**包含关系图谱数据流**
+- **模型方言编译验证**：分别用 DeepSeek / Gemini / Qwen 发送相同请求，验证生成的 Prompt 结构不同（Priming 风格、约束表达方式、**[CHARACTER_SITUATION] 渲染格式**均有差异）
+- **关系图谱注入验证**：日志显示 `[AURA→关系] 活跃实体: {user, Ruby, Yang} | 召回边数: 8 | 注入字符: 680`
 
 ---
 
@@ -753,14 +1343,7 @@ TAVO 请求 → 拆解 System Prompt
 
 **目标**：Agent开始"思考"；痛点1和痛点4的真实逻辑到位。
 
-**前置说明 — "RAG First, FormatGuard Later" 策略**：
-
-在实现 FormatGuard 之前，必须先完成 Day 2 的 RAG 记忆压缩。原因如下：
-
-- 当前 Prompt 中长记忆占 ~20,000 字符（314 条），占整个 Prompt 的 66%
-- 大量冗余记忆是 LLM 越权输出的**根本诱因**——记忆噪声导致模型混淆角色边界
-- 如果 RAG 压缩到 Top-5（~300 字符），Prompt 从 30,511 → ~10,000 字符，越权问题可能自然缓解 50%+
-- **执行顺序**：Day 2 RAG 压缩 → 观察效果 → Day 4 实现 FormatGuard 处理剩余问题
+> **前置说明**：Day 2 已实现 RAG 记忆压缩（314条→Top-5），越权问题预期缓解 50%+。Day 4 在此基础上实现 FormatGuard 处理剩余问题。详见 Day 1 关键决策第 9 条。
 
 #### 上午：事件提取 + 重要性评分
 1. **事件提取**（MemoryExtract真实化）：
@@ -775,7 +1358,7 @@ TAVO 请求 → 拆解 System Prompt
 
 #### 下午：混合检索 + 唤醒决策 + PlotAnchor
 1. **混合检索**：
-   - Chroma语义检索Top-20
+   - FAISS 语义检索 Top-20（以当前用户输入为 query 生成 embedding）
    - 重排序：`score = semantic*0.4 + importance*0.4 + time_decay*0.2`
    - `time_decay = exp(-λ*天数)`，`plot_critical`免疫
    - 返回Top-5
@@ -794,13 +1377,11 @@ TAVO 请求 → 拆解 System Prompt
 
 **FormatGuard（痛点1-越权输出）— 模型行为校正的核心组件**：
 
-FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**：
+**FormatGuard（痛点1-越权输出）**：
 
-1. **先做 Day 2 RAG 记忆压缩**：长记忆从 314 条全量（~20,000 字符）→ Top-5 语义召回（~300 字符），Prompt 从 30,511 精简到 ~10,000 字符
-2. **观察效果**：RAG 压缩后越权问题可能自然缓解（预期下降 50-60%）
-3. **再评估**：即使 RAG 缓解了越权，**FormatGuard 仍有核心价值**——因为不同模型的越权模式不同（DeepSeek 喜欢替 user 写台词，Gemini 喜欢抢戏推进剧情），FormatGuard + ModelDialectCompiler 的闭环校正才是"Sonnet 行为模拟"的完整方案
+> 背景：Day 2 RAG 压缩后越权问题已部分缓解，FormatGuard 负责处理剩余问题。不同模型越权模式不同（DeepSeek 替 user 写台词、Gemini 抢戏推进），FormatGuard + ModelDialectCompiler 的闭环校正才是"Sonnet 行为模拟"的完整方案。
 
-> **架构调整**：由于流式传输无法撤回已发送内容，AURA 采用 **"先完整生成 → 质检 → 再模拟流式返回"** 策略。FormatGuard 在完整响应上执行，不通过后触发 ModelDialectCompiler 调整策略并重写。用户感知到的是"稍慢但完美的回复"。
+> **架构调整**：流式传输无法撤回已发送内容 → AURA 内部先完整生成 → 质检 → 再模拟 SSE 流式返回。详见 Day 3 模型方言编译器设计。
 
 **StyleInjection真实化**（痛点3-文风固化中的输出结构模板化）：
 - **结构随机化**：在 ContextAssemble 中随机选择输出结构指令注入 prompt
@@ -918,8 +1499,8 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
 | **5.12-13** | StyleInjection（痛点3-文风固化中的输出结构模板化）+ **模型专属风格指令** | 结构随机化 + mes_example多样化 + 历史结构检测；**DeepSeek/Gemini/Qwen 各自的风格约束指令调优** |
 | **5.14** | 多模型切换 + **自动模型选择策略** | 配置支持多后端key；生成/提取分离；可选模型轮询；**根据角色卡复杂度 + 用户偏好自动推荐最优模型** |
 | **5.15-16** | 100轮调参 + **Prompt 编译器自动优化** | 混合检索权重调优；唤醒阈值调优；token预算分配优化；**根据质检结果（FormatGuard/OOCCheck）自动调整编译策略参数** |
-| **5.17** | 关系图谱优化 + **模型对关系边理解的差异补偿** | 不同relation_type不同更新速率；冲突不对称性；**Gemini 容易忽略隐性关系边 → 编译时显性化注入** |
-| **5.18** | 独白/隔离/冲突/官配/称谓（痛点6/7，及冲突消解、官配回归、身份漂移）+ **Sonnet 行为模拟器最终验证** | internal_thoughts表；visibility三层；conflict_heat；官配覆盖canonical；identity_label动态称谓；**同一复杂场景用 DeepSeek+Qwen+Gemini 分别跑，输出质量接近 Sonnet 基准** |
+| **5.17** | **关系图谱三级提取 + 模型差异补偿 + BFS子图优化** | 关系提取L1/L2/L3机制跑通；不同模型对关系维度敏感度差异标定；**Gemini 容易忽略隐性关系边 → 编译时显性化注入**；BFS子图Top-K排序策略调优 |
+| **5.18** | 独白/隔离/冲突/官配/称谓（痛点6/7，及冲突消解、官配回归、身份漂移）+ **Sonnet 行为模拟器最终验证** | internal_thoughts表；visibility三层隔离实战；conflict_heat算法；官配覆盖canonical；identity_label动态称谓；**同一复杂场景用 DeepSeek+Qwen+Gemini 分别跑，输出质量接近 Sonnet 基准** |
 
 **🎯 Week 3 总验收**：
 - 100轮测试，输出结构多样化（对比Week 1，不再每轮都是"环境→动作→心理→对话"的固定模板）
@@ -932,6 +1513,148 @@ FormatGuard 的优先级已调低。策略是 **"RAG First, FormatGuard Later"**
   - Gemini 抢戏率 < 5%（输出严格跟随 user 输入）
   - Qwen OOC 率 < 5%（人设一致性稳定）
   - 编译策略参数可根据质检反馈自动调整（闭环优化）
+
+---
+
+### Day 17｜关系图谱三级提取 + 模型差异补偿 + BFS子图优化（v0.9.0 关系图谱专项）
+
+#### 上午：关系提取三级机制（L1/L2/L3）完善
+
+**L1 — 角色卡引导提取（Bootstrap，一次性）**
+- 从角色卡 `description` / `first_mes` / `personality` / `scenario` 中自动抽取 `entities` 和 `relationship_edges`
+- 提取 prompt：要求 LLM 识别所有人名、组织、团体 → 输出 `(source, target, relation_type, weight, evidence_quote)`
+- evidence_quote 必须引用原文片段，用于人工审核和冲突消解
+- 预训练知识补充：对已知 IP（如 RWBY），用预训练知识填充缺失关系，但标记 `provenance='pretrained'`，可被用户显式覆盖
+
+**L2 — 对话流动态提取（持续运行）**
+- MemoryExtract 节点中，LLM 提取器除抽取情感/状态外，新增 `relationship_delta` 输出：
+  ```json
+  {
+    "relationship_delta": [
+      {"source": "Pyrrha", "target": "User", "relation_type": "romantic", "delta": 0.05, "trigger_event": "Pyrrha主动牵了User的手"}
+    ]
+  }
+  ```
+- `delta` 可为正/负，代表关系维度的增减
+- 更新规则：`new_weight = old_weight * (1 - alpha) + delta * alpha`，`alpha=0.3` 防止单次对话剧烈跳变
+- 不对称边支持：`delta` 可只更新 source→target 方向，target→source 保持不变
+
+**L3 — 用户显式覆盖（最高优先级）**
+- 用户在 TAVO 中通过 OOC 指令或记忆编辑直接声明关系
+- 格式：`/relationship set Pyrrha User romantic 0.92 "灵魂绑定"`
+- 直接写入 `relationship_edges`，`provenance='manual'`，不受 L2 自动提取覆盖
+
+#### 下午：模型差异补偿 + BFS子图排序策略调优
+
+**模型对关系维度的敏感度差异标定**
+| 模型 | 高敏感维度 | 低敏感维度 | 补偿策略 |
+|------|-----------|-----------|---------|
+| DeepSeek | romantic, rivalry, duty | trust, gratitude | 低敏感维度注入时增加定性形容词（如"毫无保留地信任"） |
+| Gemini | power, duty | romantic, trust | romantic 边显性化标注"爱情"；trust 用行为锚点替代数值 |
+| Qwen | trust, familiarity | proprietary, guilt | proprietary 边用"视为己有"等强措辞；guilt 加原因说明 |
+
+**BFS子图提取参数调优**
+```python
+class SubgraphConfig:
+    max_distance: int = 2           # BFS最大深度：1=直接关系，2=关系的关系
+    max_edges: int = 12             # 单会话最大注入边数（控制token）
+    max_chars: int = 1200           # 关系描述最大字符数
+    visibility_filter: bool = True  # 只注入对当前active角色可见的边
+    ranking_weights = {
+        "romantic": 1.5,           # 高优先级维度加权
+        "rivalry": 1.4,
+        "duty": 1.2,
+        "recency": 1.3,            # 最近更新的边优先
+        "weight": 1.0,
+    }
+```
+- Top-K 排序算法：`score = weight * dimension_weight * recency_decay(last_update)`
+- 超过 `max_edges` 时，低分边降级为"……此外与X、Y保持一般关系"的概括性描述
+
+#### 晚上：关系一致性校验 + 回归测试
+
+- **FormatGuard 新增校验**：检测 LLM 输出是否违反已知关系边（如 Pyrrha 对 User 的 romantic=0.9 时，不应写出"我们只是普通朋友"）
+- **OOCCheck 新增校验**：检测 LLM 是否向 B 泄露了 A 对 B 的 secret_from_target 关系（如 A 私下恨 B，但 A 不应当面表露）
+- 测试集：构造 10+ 种关系冲突场景，验证 LLM 在注入关系子图后的行为改变
+
+---
+
+### Day 18｜独白/隔离/冲突/官配/称谓实战（v0.9.0 进阶特性验证）
+
+#### 上午：visibility 三层隔离 + internal_thoughts 内心独白表
+
+**visibility 三层隔离实战**
+- `known_to_both`：双方心知肚明的关系（如官宣情侣）
+- `secret_from_target`：Source 知道但 Target 不知道（如 A 暗恋 B，B 不知道）
+- `secret_from_source`：Target 知道但 Source 不知道（如 B 知道 A 暗恋自己，但假装不知道）
+- `known_to_group`：某个 cluster 内共享的秘密（如小队成员都知道队长牺牲了，但对外保密）
+
+**BFS子图注入时的 visibility 过滤逻辑**：
+```python
+# 当前正在扮演角色 active_entity = "Pyrrha"
+for edge in subgraph_edges:
+    if edge.visibility == "secret_from_target" and active_entity == edge.target:
+        # Pyrrha 是 target，这条边对 Pyrrha 不可见 → 跳过
+        continue
+    if edge.visibility == "secret_from_source" and active_entity == edge.source:
+        # Pyrrha 是 source，这条边对 Pyrrha 不可见 → 跳过
+        continue
+    if edge.visibility == "known_to_group":
+        if active_entity not in cluster_members[edge.cluster_id]:
+            continue
+    # 其余情况注入
+```
+
+**internal_thoughts 内心独白表**（SQLite）
+```sql
+CREATE TABLE internal_thoughts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    thought TEXT NOT NULL,           -- 内心独白内容
+    trigger_event TEXT,              -- 触发此次独白的对话/事件
+    emotion_tag TEXT,                -- 情绪标签
+    is_revealed INTEGER DEFAULT 0,   -- 是否已在后续对话中泄露
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+- 独白只注入给对应角色的 `CHARACTER_SITUATION`，不泄露给其他角色
+- `is_revealed` 标记：若角色在后续对话中不小心说出独白内容 → FormatGuard 拦截
+
+#### 下午：conflict_heat 冲突热度 + 官配覆盖 canonical
+
+**conflict_heat 算法**
+- 计算角色间冲突热度：`heat = Σ |rivalry_weight| + Σ |duty_conflict| + event_penalty`
+- `event_penalty`：最近 5 轮内发生对抗事件的惩罚加分
+- 热度状态机：`calm(0-0.3) → tense(0.3-0.6) → heated(0.6-0.9) → explosive(0.9+)`
+- 热度注入 `CHARACTER_SITUATION`："当前与 Yang 的冲突处于 **tense** 状态，她对你的信任正在下降"
+
+**官配覆盖 canonical 机制**
+- 预训练知识中的官配（如 Ruby×Weiss 原剧搭档）用 `canonical` 字段标记
+- 用户与角色建立新关系后（romantic 超过 0.7），新关系标记 `overrides_canonical = 1`
+- Prompt 注入时：优先展示 `overrides_canonical=1` 的关系，官配降级为"曾经的搭档"而非"现在的恋人"
+- 解决痛点：官配不再强行回归，用户的主线关系稳定
+
+#### 晚上：identity_label 动态称谓 + Sonnet 行为模拟器最终验证
+
+**identity_label 动态称谓**
+- 根据 romantic + trust + familiarity 综合计算称谓等级：
+  - `romantic > 0.8` → "主人/老公/亲爱的"（取决于角色设定）
+  - `romantic 0.5-0.8` → "（名字）"（亲昵但不过界）
+  - `romantic < 0.5 && trust > 0.6` → "（姓）同学/队长"（尊重距离）
+  - `romantic < 0.3 && rivalry > 0.5` → "那个家伙"（敌对）
+- 称谓变化渐进：不允许单次对话内从"同学"跳到"老公"，需要至少 3 轮过渡
+
+**Sonnet 行为模拟器最终验证**
+- 选取 1 个复杂多角色场景（如：Pyrrha 和 Yang 同时在场，Pyrrha 与 User 情侣关系，Yang 对 User 有 rivalry）
+- 同一初始状态，分别用 DeepSeek / Gemini / Qwen + AURA 编译，各跑 20 轮
+- 评估维度：
+  1. Pyrrha 是否表现出 romantic 应有的亲密但不越界
+  2. Yang 是否表现出 rivalry 应有的对抗但不崩人设
+  3. User 对 Pyrrha 说话时，Yang 是否能"听见"但反应符合 known_to_both 关系
+  4. 无角色出现 OOC、抢戏、越权
+- 基准：同一角色卡直出 Sonnet（不经过 AURA）作为 gold standard
+- 目标：三个模型的 AURA 编译输出，在 4 个维度上均达到 Sonnet 的 90% 水平
 
 ---
 
@@ -982,7 +1705,6 @@ langchain-openai==0.2.0
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.30.0
 redis==5.1.0
-chromadb==0.5.0
 networkx==3.4.0
 
 # 工具
@@ -1011,3 +1733,418 @@ Day X 汇报：
 ```
 
 ---
+
+## 附录：人物关系图谱与人物状态管理完整方案
+
+### 一、数据结构设计原则
+
+1. **非线性网状结构**：人与人之间的关系不是简单的 source→target 二元对，而是多维度、有向、动态变化的图。
+2. **存储分离，注入合并**：`dynamic_state`（事实型，每轮可能变）和 `relationship_edges`（情感型，每 5-10 轮变）在数据库中分表存储，但在 Prompt 中融合为 `[CHARACTER_SITUATION]` 角色导演笔记。
+3. **可见性三层隔离**：关系边有 `visibility` 字段（known_to_both / secret_from_target / secret_from_source / known_to_group），BFS 子图注入时必须过滤。
+4. **模型差异补偿**：不同模型对不同关系维度的敏感度不同，编译时需要显性化/定性化调整。
+5. **渐进更新防跳变**：L2 自动提取的 `delta` 使用 `alpha=0.3` 平滑更新，防止单次对话剧烈跳变。
+
+### 二、完整 SQL Schema（已在 Day 2 实现）
+
+见上文 Day 2 SQLite Schema 部分（`entities`、`relationship_edges`、`relationship_events`、`relationship_clusters`、`entity_cluster_membership` 五表）。
+
+### 三、Python 数据模型设计
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List
+from enum import Enum
+
+class RelationDimension(str, Enum):
+    TRUST = "trust"
+    ROMANTIC = "romantic"
+    DUTY = "duty"
+    POWER = "power"
+    FAMILIARITY = "familiarity"
+    PROPRIETARY = "proprietary"
+    RIVALRY = "rivalry"
+    GRATITUDE = "gratitude"
+    GUILT = "guilt"
+
+class RelationStatus(str, Enum):
+    ACTIVE = "active"
+    FROZEN = "frozen"
+    BROKEN = "broken"
+    REBUILDING = "rebuilding"
+    DORMANT = "dormant"
+
+class Visibility(str, Enum):
+    KNOWN_TO_BOTH = "known_to_both"
+    SECRET_FROM_TARGET = "secret_from_target"
+    SECRET_FROM_SOURCE = "secret_from_source"
+    KNOWN_TO_GROUP = "known_to_group"
+
+@dataclass
+class Entity:
+    id: str
+    session_id: str
+    name: str
+    aliases: List[str] = field(default_factory=list)
+    entity_type: str = "npc"
+    identity_label: Optional[str] = None
+    canonical_relations: Dict = field(default_factory=dict)
+    oc_attributes: Dict = field(default_factory=dict)
+    is_user_proxy: bool = False
+
+@dataclass
+class RelationshipEdge:
+    id: int
+    session_id: str
+    source_id: str
+    target_id: str
+    dimension: RelationDimension
+    source_to_target: float = 0.0
+    target_to_source: Optional[float] = None
+    label_forward: Optional[str] = None
+    label_backward: Optional[str] = None
+    status: RelationStatus = RelationStatus.ACTIVE
+    provenance: str = "dialogue"
+    confidence: float = 0.5
+    visibility: Visibility = Visibility.KNOWN_TO_BOTH
+    visible_to_entities: List[str] = field(default_factory=list)
+    established_at: Optional[str] = None
+    last_updated: Optional[str] = None
+    update_count: int = 0
+
+@dataclass
+class RelationshipSubgraph:
+    """BFS 提取的关系子图，用于 Prompt 注入"""
+    center_entity_id: str
+    edges: List[RelationshipEdge]
+    related_entities: Dict[str, Entity]  # entity_id -> Entity
+    max_distance: int = 2
+```
+
+### 四、RelationshipManager API 设计
+
+```python
+class RelationshipManager:
+    """关系图谱管理器：负责实体管理、关系边 CRUD、BFS 子图提取、Prompt 渲染"""
+    
+    def __init__(self, sqlite_conn):
+        self.conn = sqlite_conn
+    
+    # ========== 实体管理 ==========
+    async def create_entity(self, session_id: str, name: str, entity_type: str, **kwargs) -> Entity:
+        """创建实体（角色/NPC/派系/群体）"""
+    
+    async def get_entity_by_name(self, session_id: str, name: str) -> Optional[Entity]:
+        """按名称查找实体（支持别名匹配）"""
+    
+    # ========== 关系边管理 ==========
+    async def set_relationship(
+        self, session_id: str, source: str, target: str,
+        dimension: RelationDimension, source_to_target: float,
+        target_to_source: Optional[float] = None,
+        visibility: Visibility = Visibility.KNOWN_TO_BOTH,
+        provenance: str = "dialogue"
+    ) -> RelationshipEdge:
+        """设置/更新关系边（存在则更新，不存在则创建）"""
+    
+    async def update_relationship_delta(
+        self, session_id: str, source: str, target: str,
+        dimension: RelationDimension, delta: float,
+        trigger_event: Optional[str] = None
+    ) -> RelationshipEdge:
+        """L2 自动提取：按 delta 更新关系边，alpha=0.3 平滑"""
+    
+    async def get_relationship(
+        self, session_id: str, source: str, target: str, dimension: RelationDimension
+    ) -> Optional[RelationshipEdge]:
+        """获取特定维度的关系边"""
+    
+    # ========== BFS 子图提取 ==========
+    async def get_relationship_context(
+        self,
+        session_id: str,
+        active_entity_ids: List[str],
+        current_speaker_id: str,
+        max_distance: int = 2,
+        max_edges: int = 12,
+        visibility_filter: bool = True
+    ) -> RelationshipSubgraph:
+        """
+        BFS 子图提取 + visibility 过滤 + Top-K 排序
+        1. 以 active_entity_ids 为起点，BFS 遍历 relationship_edges
+        2. 若 visibility_filter=True，过滤对 current_speaker_id 不可见的边
+        3. Top-K 排序：score = weight * dimension_weight * recency_decay
+        4. 返回 RelationshipSubgraph
+        """
+    
+    # ========== Prompt 渲染 ==========
+    async def render_character_situation(
+        self,
+        subgraph: RelationshipSubgraph,
+        dynamic_states: Dict[str, dict],  # entity_id -> state_json dict
+        target_model: str = "deepseek"
+    ) -> str:
+        """
+        将关系子图 + 动态状态融合渲染为 [CHARACTER_SITUATION] 字符串
+        - 根据 target_model 选择渲染格式（自然语言段落 / 结构化列表 / XML 块）
+        - 组合语义计算（多维度组合定性）
+        - 行为锚点生成（告诉模型该写什么细节）
+        - 核心矛盾推导
+        """
+```
+
+### 五、Prompt 渲染策略详解
+
+**组合语义算法**：
+```python
+def compute_composite_semantic(edge: RelationshipEdge) -> str:
+    """根据多维度权重组合生成定性语义描述"""
+    dims = {
+        "romantic": edge.source_to_target if edge.dimension == RelationDimension.ROMANTIC else 0,
+        "trust": edge.source_to_target if edge.dimension == RelationDimension.TRUST else 0,
+        "proprietary": edge.source_to_target if edge.dimension == RelationDimension.PROPRIETARY else 0,
+        # ... 其他维度
+    }
+    
+    if dims["romantic"] > 0.8 and dims["trust"] > 0.8:
+        return "灵魂绑定级无条件信赖"
+    elif dims["romantic"] > 0.6 and dims["proprietary"] > 0.6:
+        return "深爱型强排他占有"
+    elif dims["trust"] > 0.7 and dims["romantic"] < 0.3:
+        return "战友级深度信赖（无浪漫）"
+    # ... 更多组合规则
+    else:
+        return "一般关系"
+```
+
+**行为锚点生成规则**：
+```python
+BEHAVIOR_ANCHORS = {
+    RelationDimension.ROMANTIC: {
+        (0.8, 1.0): ["独处时无意识靠近/肢体接触", "提到对方时眼神变柔和", "发现竞争者时笑容僵硬"],
+        (0.6, 0.8): ["主动寻找相处机会", "言语有试探性", "身体接触自然化"],
+        (0.4, 0.6): ["不自觉关注对方", "会记住对方喜好", "偶遇时心跳加速"],
+        # ...
+    },
+    RelationDimension.TRUST: {
+        (0.8, 1.0): ["无需言语验证", "愿暴露最大弱点", "默认对方不会背叛"],
+        # ...
+    }
+}
+
+def get_behavior_anchors(edge: RelationshipEdge) -> List[str]:
+    """根据维度权重返回对应的行为锚点列表"""
+    weight = edge.source_to_target
+    anchors = []
+    for dim in RelationDimension:
+        if dim in BEHAVIOR_ANCHORS:
+            for (low, high), behaviors in BEHAVIOR_ANCHORS[dim].items():
+                if low <= weight <= high:
+                    anchors.extend(behaviors)
+    return anchors[:3]  # 最多取3个，控制token
+```
+
+### 六、面试话术要点（关系图谱方向）
+
+**如果面试官问"人物关系图谱是怎么设计的？"**：
+
+> "我设计了一个**多维有向关系图**，不是简单的 source-target 二元对。
+> 
+> 核心表是 `relationship_edges`，每条边有 9 个维度（romantic/trust/duty/power/familiarity/proprietary/rivalry/gratitude/guilt），每个维度有两个方向的有向权重（source_to_target 和 target_to_source），因为 A 对 B 的信任和 B 对 A 的信任通常不对称。
+> 
+> 还有 visibility 字段做三层隔离：known_to_both、secret_from_target、secret_from_source、known_to_group。这解决了'内心独白泄露'和'跨角色记忆隔离'两个痛点。
+> 
+> 注入 Prompt 时，我用 BFS 子图提取——以当前活跃实体为起点，max_distance=2，最多召回 12 条边，超过的降级为概括描述。这样把可能几千字符的全图压缩到 1200 字符以内，不爆 token。
+> 
+> 最关键的是**模型差异补偿**：我发现 Gemini 对 romantic 边不敏感，所以编译时把 romantic 边显性化标注为'爱情'；DeepSeek 对 trust 边不敏感，所以用'毫无保留地信任'这种强措辞替代纯数值。这让同一套关系数据，在不同模型上都能被正确理解。"
+
+**如果面试官问"怎么让模型'尊重'关系数据？"**：
+
+> "三个锚定策略：
+> 1. **位置锚定**：`[CHARACTER_SITUATION]` 放在 `[CHARACTER_CARD]` 之后、`[WORKING_MEMORY]` 之前——让模型在'理解角色是谁'之后、'看到最近对话'之前，先建立'这个角色现在怎么看世界'的认知框架。
+> 2. **指令锚定**：在 `[OUTPUT_SPEC]` 中写死关系遵循强制规则——'romantic>0.6 必须在动作或内心中体现'、'trust<0.3 必须有试探保留'。
+> 3. **反馈锚定**：FormatGuard 做关系一致性校验——如果 Ruby→user romantic=0.85 但输出中 Ruby 对 user 冷淡，就拦截并重写。"
+
+---
+
+## 附录七、UserInputIntentResolver（用户意图解析器）架构设计
+
+> 对应痛点 #15：**用户输入意图隐含 → LLM 默认接话而非渲染反应**
+> 状态：未来方向（P2：高价值 / 中等复杂度）
+> 当前决策：在最终输出到 LLM 之前，先调用一次轻量 LLM API 做意图识别与 Prompt 修正，再传递给主 LLM 生成。微调方案写入未来项目规划。
+
+### 一、问题定义
+
+在 RP 场景中，用户输入往往不是**完整指令**，而是**场景暗示**：
+
+| 用户输入 | 表面语义 | 隐含意图 |
+|---------|---------|---------|
+| `*我点了一支烟*` | 描述自身动作 | **请渲染：他人反应、环境氛围、剧情张力** |
+| `*叹气* 算了...` | 情绪表达 | **请渲染：对方追问/安慰/沉默的压力** |
+| `*我转身离开房间*` | 场景动作 | **请渲染：门关上后的回响、他人表情变化** |
+| `"你觉得怎么样？"` | 直接提问 | **请渲染：基于角色性格+关系的真实回答** |
+
+LLM 的默认行为是"接话"——你说了 A，我说 B。但用户说 A 时，经常想要的是**"A 引发的涟漪"**。这不是 LLM 笨，而是**用户输入本身就是不完整的 Prompt**。
+
+### 二、为什么 AURA 能做这件事？
+
+AURA 夹在 TAVO 和 LLM 中间，是**唯一能看到原始用户输入并改写它**的层：
+- TAVO 不会做这个（它只是个前端）
+- LLM 默认不会做（它只会接话）
+- AURA 作为 Prompt 编译器，天然适合承担"意图补全"职责
+
+### 三、架构设计：轻量 LLM 前置调用
+
+在 LangGraph 状态机的 `InputReceive` 之后、`EmotionAnalyze` 之前，插入 **`IntentTagger`** 节点：
+
+```
+InputReceive → [IntentTagger] → EmotionAnalyze → ... → LLMGenerate
+                  ↑
+          调用轻量 LLM API
+          (Kimi lite / Qwen Turbo / DeepSeek Chat)
+```
+
+**IntentTagger 输出**（双字段设计）：
+- `user_intent`：意图类型（`ACTION_ONLY` / `DIRECT_SPEECH` / `SCENE_EXIT` / `DEFAULT`）
+- `implicit_instruction`：应注入主 LLM 的隐式指令（**导演指令风格**："请渲染..."、"不要替用户..."）
+- `expanded_scene`：用户输入的**场景化叙事展开**（**场景叙事风格**：与 FAISS 入库记忆风格一致，用于 RAG embedding）
+- `confidence`：置信度（<0.6 时放弃修正，直接透传）
+
+> **为什么需要两个字段？**
+> - `implicit_instruction` → 告诉主 LLM "应该生成什么"（导演指令）
+> - `expanded_scene` → 让 RAG 召回 "用户此刻在做什么"（场景叙事）
+> 两者风格不同、用途不同、下游不同，不可混用。
+
+### 四、轻量 LLM 的 Prompt 设计
+
+```
+你是角色扮演场景中的用户意图分析师。
+
+【当前场景上下文】
+场景类型: {scene_type}
+活跃角色: {active_entities}
+用户与主角关系: {user_relationship_summary}
+
+【用户输入】
+{user_input}
+
+【分析任务】
+1. 输入类型: [纯动作/纯台词/动作+台词/情绪表达/场景指令/其他]
+2. 用户期望 LLM 输出什么:
+   - A. 用户想继续自己的行动（LLM 应帮助推进用户角色）
+   - B. 用户想看其他角色反应（LLM 应渲染环境和他人）
+   - C. 用户想推进剧情（LLM 应发展情节）
+   - D. 用户在等待回应（LLM 应让其他角色接话）
+3. 置信度: 0-1
+4. 建议的 Prompt 修正（implicit_instruction）: [导演指令风格，指导主 LLM 生成方向]
+5. 场景化叙事展开（expanded_scene）: [将用户输入扩展为与 FAISS 记忆同风格的场景描写，包含地点、动作、氛围，不含"请渲染"等指令]
+
+输出为JSON，不要解释。
+
+> **expanded_scene 写作要求**：
+> - 使用第三人称叙述视角
+> - 补充从上下文中可推断的地点和氛围细节
+> - 保留用户台词（如有）并加引号
+> - 纯动作用环境描写填充（光线、声音、气味等）
+> - **禁止出现** "请渲染"、"等待反应"、"期待回应" 等元指令
+> - 风格应与入库记忆一致： `"信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang..."`
+```
+
+**返回示例**：
+```json
+{
+  "input_type": "纯动作",
+  "user_expectation": "B",
+  "confidence": 0.85,
+  "implicit_instruction": "用户已完成'点烟'动作，请渲染房间内其他角色对此的反应、环境氛围变化，不要替用户生成后续动作。",
+  "expanded_scene": "昏暗的房间里。user 点燃了一支烟，橘红色的火光在阴影中明灭不定，烟雾缓缓升腾，空气里弥漫着淡淡的烟草气息。"
+}
+```
+
+**对比**：
+| 字段 | 风格 | 用途 | 注入位置 |
+|------|------|------|---------|
+| `implicit_instruction` | 导演指令（"请渲染..."） | 指导主 LLM 生成方向 | `[WORKING_MEMORY]` 末尾 → 主 LLM |
+| `expanded_scene` | 场景叙事（"user 点燃了烟..."） | RAG 语义召回对齐 | `_get_embedding(expanded_scene)` → FAISS |
+
+### 五、注入主 LLM 的方式
+
+不修改用户可见的输入，而是在 `[WORKING_MEMORY]` 区块末尾追加 `[USER_INTENT_TAG]`（使用 `implicit_instruction`）：
+
+```
+[WORKING_MEMORY]
+user: *我点了一支烟*
+
+[USER_INTENT_TAG]
+类型: ACTION_ONLY
+推断: 用户已完成动作，需要系统生成其他角色反应和环境反馈
+禁止: 不要替用户生成后续动作或台词
+```
+
+这样主 LLM 看到的不是被篡改的用户输入，而是**被注释了意图的上下文**——用户无感知，但 LLM 获得了关键的"导演笔记"。
+
+### 六、与 RAG 召回的衔接
+
+`expanded_scene` 不是给 LLM 看的，而是给 embedding 模型看的：
+
+```
+用户输入: *我点了一支烟*
+    ↓
+IntentTagger → expanded_scene: "昏暗的房间里。user 点燃了一支烟..."
+    ↓
+_get_embedding(expanded_scene) → 512维向量
+    ↓
+FAISS.search() → 召回与"点烟/房间/氛围"相关的历史记忆
+```
+
+**为什么不能用 `implicit_instruction` 做 embedding？**
+- `implicit_instruction` = `"请渲染房间内其他角色对此的反应"` → 这是**导演指令**，不是**场景叙事**
+- FAISS 库里存的是 `"信标学院宿舍。夕阳斜照...Ruby说：'...'"` → 场景叙事
+- 指令文本与叙事文本语义空间不对齐，导致召回率下降
+
+**为什么 `expanded_scene` 能提高召回率？**
+- 用户输入 `走吧` → expanded: `user 提议离开当前地点，准备动身前行`
+- FAISS 记忆 `"宿舍门口。Ruby 站起身，拍了拍身上的灰尘：'我们该走了。'"`
+- 两者都在"离开/动身"语义空间 → **召回成功**
+- 如果直接用 `"走吧"` embedding → 语义过短，与长篇记忆距离远 → **召不回**
+
+**核心原则**：
+> Embedding 的输入和 FAISS 库存储的必须是同一类文本：场景化叙事。
+> 导演指令只应出现在 LLM Prompt 中，绝不应出现在向量空间中。
+
+### 七、成本与延迟分析
+
+| 模型 | 成本/千 tokens | 输入长度 | 输出长度 | 单轮额外成本 | 额外延迟 |
+|------|---------------|---------|---------|-------------|---------|
+| Kimi lite | ~0.1 元 | ~300 | ~150 | ~0.05 元 | ~0.5s |
+| Qwen Turbo | ~0.06 元 | ~300 | ~150 | ~0.03 元 | ~0.4s |
+| DeepSeek Chat | ~0.05 元 | ~300 | ~150 | ~0.025 元 | ~0.6s |
+
+**关键设计**：置信度低于 0.6 时跳过修正，直接透传原输入——避免低置信度下的误推断污染主流程。
+
+### 八、为什么不用同一个 LLM 做两件事？
+
+主 LLM（DeepSeek/Gemini）的注意力已被角色扮演内容占满，额外的元指令会被稀释。前置专用意图层的好处：
+1. **职责分离**：意图分析不受角色扮演内容干扰
+2. **结果可观测**：你能看到 AURA 怎么理解用户输入，便于调试
+3. **可回退**：意图识别失败时直接透传，不阻断主流程
+4. **模型解耦**：意图层可用便宜模型，主 LLM 保留给生成
+
+### 九、演进路线
+
+| 阶段 | 时机 | 方案 | 触发条件 |
+|------|------|------|---------|
+| **Phase 1** | 当前 | 路径 B（轻量 LLM API） | 每轮用户输入，自动意图识别 |
+| **Phase 2** | 3 个月后 | 路径 B + 日志积累 | 收集 2000+ 条带标注请求，分析误识别 case |
+| **Phase 3** | 6 个月后 | 迁移到路径 C（微调小模型） | 准确率稳定 >90%，用积累数据微调 Qwen-7B 本地部署 |
+
+### 十、与现有架构的融合点
+
+- **LangGraph**：新增 `IntentTagger` 节点，位于 `InputReceive` → `EmotionAnalyze` 之间
+- **PromptReassembler**：在 `[WORKING_MEMORY]` 末尾条件注入 `[USER_INTENT_TAG]`（使用 `implicit_instruction`）
+- **MemoryManager.search()**：在 `_get_embedding(query)` 之前，将 `query` 替换为 `expanded_scene`
+- **FormatGuard**：未来可扩展为验证 LLM 输出是否符合推断意图（如推断为 B 但 LLM 仍在写 user 的行动 → 拦截）
+- **日志系统**：记录 `user_input` → `intent` → `implicit_instruction` + `expanded_scene` 全链路，为 Phase 3 微调积累训练数据
+
+---
+
+*本文档最后更新：2026-05-09*

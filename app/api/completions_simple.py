@@ -485,12 +485,26 @@ async def chat_completion(
         messages_list = [msg.model_dump() for msg in request.messages]
 
     # ============================================================
-    # 3.5 保存对话到 SQLite + 触发记忆总结（v0.6.0）
+    # 3.5 对话同步 + 保存到 SQLite + 触发记忆总结（v0.6.0）
     # ============================================================
     try:
         # 获取或创建 AURA 会话 ID
         aura_session_id = _session_map.get(session_id, session_id)
         _session_map[session_id] = aura_session_id
+
+        # ================================================================
+        # 3.5a 对话同步：倒序匹配 TAVO 发来的对话与本地数据库
+        #      处理用户在 TAVO 中的编辑/撤回操作
+        #      在保存新对话之前执行，确保数据库与 TAVO 一致
+        # ================================================================
+        # 提取 TAVO 发来的所有非 system 消息（user + assistant）
+        tavo_dialogue_messages = [
+            {"role": msg.role, "content": msg.content}
+            for msg in request.messages
+            if msg.role in ("user", "assistant")
+        ]
+        if tavo_dialogue_messages:
+            await memory_manager.sync_dialogue_from_tavo(aura_session_id, tavo_dialogue_messages)
 
         # 获取轮次编号
         round_num = await memory_manager.get_round_number(aura_session_id)
@@ -546,9 +560,15 @@ async def chat_completion(
 
     # 4. 根据是否流式选择不同处理方式
     if request.stream:
-        return await _handle_streaming_request(url, headers, forward_payload, session_id, x_tavo_debug)
+        return await _handle_streaming_request(
+            url, headers, forward_payload, session_id, x_tavo_debug,
+            aura_session_id=aura_session_id, round_num=round_num
+        )
     else:
-        return await _handle_non_streaming_request(url, headers, forward_payload, session_id, x_tavo_debug, request.model)
+        return await _handle_non_streaming_request(
+            url, headers, forward_payload, session_id, x_tavo_debug, request.model,
+            aura_session_id=aura_session_id, round_num=round_num
+        )
 
 async def _handle_non_streaming_request(
     url: str,
@@ -556,7 +576,9 @@ async def _handle_non_streaming_request(
     payload: Dict[str, Any],
     session_id: str,
     debug_flag: Optional[str],
-    model_name: str
+    model_name: str,
+    aura_session_id: str = "",
+    round_num: int = 0
 ) -> ChatCompletionResponse:
     """处理非流式请求：发送普通 POST 请求，返回标准 JSON 响应"""
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=60.0)) as client:
@@ -646,6 +668,16 @@ async def _handle_non_streaming_request(
                 }
                 logger.debug(f"[AURA→TAVO] 已注入调试信息 | 会话: {session_id}")
 
+            # 保存 LLM 回复到 SQLite（非流式）
+            if aura_session_id and round_num > 0:
+                try:
+                    assistant_content = choices[0].message.content if choices else ""
+                    if assistant_content:
+                        await memory_manager.save_dialogue(aura_session_id, "assistant", assistant_content, round_num)
+                        logger.debug(f"[AURA→记忆] 保存 LLM 回复 | 会话: {aura_session_id} | 轮次: {round_num} | 长度: {len(assistant_content)}字符")
+                except Exception as e:
+                    logger.warning(f"[AURA→记忆] 保存 LLM 回复失败（不影响返回）: {e}")
+
             # [AURA→TAVO] 记录返回给 TAVO 的响应
             logger.info(f"[AURA→TAVO] 返回响应 | 会话: {session_id} | 响应ID: {response_obj.id} | choices: {len(choices)}")
 
@@ -660,7 +692,9 @@ async def _handle_streaming_request(
     headers: Dict[str, str],
     payload: Dict[str, Any],
     session_id: str,
-    debug_flag: Optional[str]
+    debug_flag: Optional[str],
+    aura_session_id: str = "",
+    round_num: int = 0
 ) -> StreamingResponse:
     """处理流式请求：透传后端 SSE 数据流，并记录 LLM 响应数据"""
     async def stream_generator():
@@ -712,6 +746,14 @@ async def _handle_streaming_request(
                     )
                     if settings.debug_mode and content_preview:
                         logger.debug(f"[LLM→AURA] 流式响应内容预览: {content_preview}")
+
+                    # 保存 LLM 回复到 SQLite（流式）
+                    if aura_session_id and round_num > 0 and full_content:
+                        try:
+                            await memory_manager.save_dialogue(aura_session_id, "assistant", full_content, round_num)
+                            logger.debug(f"[AURA→记忆] 保存 LLM 回复（流式）| 会话: {aura_session_id} | 轮次: {round_num} | 长度: {len(full_content)}字符")
+                        except Exception as e:
+                            logger.warning(f"[AURA→记忆] 保存 LLM 回复失败（流式，不影响返回）: {e}")
 
             except httpx.TimeoutException:
                 logger.error(f"流式请求超时 | 会话: {session_id}")
