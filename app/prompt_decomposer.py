@@ -271,6 +271,55 @@ class PromptDecomposer:
                     lines[sections["char_card_start"]:]
                 ).strip()
 
+            # ============================================================
+            # 最终回退：如果角色卡仍为空，尝试从 user_profile 结束到 world_book 之间提取
+            # 适用于中文角色卡格式（如 "角色名：..." 或 "【角色名】..."）
+            # ============================================================
+            if not result["character_card"]:
+                # 确定 user_profile 的结束行
+                profile_end = None
+                if sections["user_profile_start"] is not None:
+                    if sections["char_card_start"] is not None:
+                        profile_end = sections["char_card_start"]
+                    elif sections["world_book_start"] is not None:
+                        profile_end = sections["world_book_start"]
+                    elif sections["xml_start"] is not None:
+                        profile_end = sections["xml_start"]
+                    else:
+                        profile_end = len(lines)
+                elif sections["memory_usage_start"] is not None:
+                    if sections["char_card_start"] is not None:
+                        profile_end = sections["char_card_start"]
+                    elif sections["world_book_start"] is not None:
+                        profile_end = sections["world_book_start"]
+                    else:
+                        profile_end = len(lines)
+
+                if profile_end is not None and profile_end < len(lines):
+                    # 从 user_profile 结束行开始，到下一个已知区域结束
+                    card_end = len(lines)
+                    if sections["world_book_start"] is not None and sections["world_book_start"] > profile_end:
+                        card_end = sections["world_book_start"]
+                    elif sections["xml_start"] is not None and sections["xml_start"] > profile_end:
+                        card_end = sections["xml_start"]
+
+                    candidate_lines = lines[profile_end:card_end]
+                    candidate_text = "\n".join(candidate_lines).strip()
+                    # 只提取非空、非标记行
+                    meaningful_lines = []
+                    for cl in candidate_lines:
+                        stripped_cl = cl.strip()
+                        if stripped_cl and not stripped_cl.startswith("=====") and not stripped_cl.startswith("<!--"):
+                            meaningful_lines.append(cl)
+                    if meaningful_lines:
+                        result["character_card"] = "\n".join(meaningful_lines).strip()
+                        if result["character_card"]:
+                            logger.info(
+                                f"[AURA→回退] 使用格式回退提取角色卡: "
+                                f"行 {profile_end+1}-{card_end} | "
+                                f"{len(result['character_card'])}字符"
+                            )
+
             # 世界书
             if sections["world_book_start"] is not None and sections["xml_start"] is not None:
                 result["world_book"] = "\n".join(

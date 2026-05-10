@@ -426,7 +426,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ### Day 1 实际完成情况（2026-05-03）
 
-#### 已完成功能清单（v0.6.0）
+#### 已完成功能清单（v0.7.0）
 
 | 功能 | 文件 | 状态 |
 |------|------|------|
@@ -446,6 +446,20 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | 用户名动态提取（从对话第一条 user 消息） | `app/api/completions_simple.py` | ✅ |
 | 重组后 Prompt 保存到独立文件 | `app/api/completions_simple.py` | ✅ |
 | COT 自我校验指令（[OUTPUT_SPEC] 末尾追加 5 步检查） | `app/api/completions_simple.py` | ✅ |
+| **v0.7.0 新增** | | |
+| IntentTagger（用户意图解析器，双字段输出） | `app/intent_tagger.py` | ✅ |
+| 结构化字段数据模型（IntentStructure / IntentResult） | `app/memory/models.py` | ✅ |
+| 入库结构化字段提取（summarize_and_store → _extract_structure） | `app/memory/manager.py` | ✅ |
+| 结构化感知 RAG 检索（structured_aware_search，3 阶段） | `app/memory/manager.py` | ✅ |
+| 3 层记忆架构（WORKING + RECENT + LONG_TERM） | `app/api/completions.py` | ✅ |
+| USER_INTENT_TAG 注入（仅 natural language implicit_instruction） | `app/api/completions.py` | ✅ |
+| 场景化 LLM 配置（main/summary/intent 三场景） | `app/config.py` | ✅ |
+| 角色卡中文格式回退检测 | `app/prompt_decomposer.py` | ✅ |
+| 长记忆 TAVO 透传（FAISS 空时回退） | `app/api/completions.py` | ✅ |
+| 调试日志文件（tavo_input_* / aura_output_*） | `app/api/completions.py` | ✅ |
+| SSE 流式分块保留段落结构（\n\n 追加到段落末尾） | `app/api/completions.py` | ✅ |
+| Kimi k2.6 适配（temperature=1.0, max_tokens=2048, timeout=60） | `app/config.py` | ✅ |
+| IntentTagger SYSTEM_PROMPT 精简（845→451 字符，适配 Kimi reasoning） | `app/intent_tagger.py` | ✅ |
 
 #### 关键决策记录
 
@@ -773,191 +787,119 @@ async def search(self, query: str, top_k: int = 5) -> List[str]:
 
 ---
 
-**📌 意图感知 RAG（Intent-Aware RAG）—— RP 场景的核心改进**
+**📌 意图感知 RAG（Intent-Aware RAG）—— RP 场景的核心改进（v2 设计）**
 
 > 经讨论确认：RP 场景下，**字面 RAG 大概率召回无关内容**。用户输入 `*我点了一支烟*` 的字面语义是"烟草/点燃"，但真实意图是"请渲染他人反应、环境氛围、剧情张力"。传统 embedding 检索召回的是"点烟相关记忆"，而用户需要的是"社交张力相关记忆"。**不解决这个问题，RAG 召回不如不召回。**
+
+**核心设计原则**：
+
+IntentTagger 输出**两个独立部分**，流向不同下游：
+1. **结构化数据**（多个字段，每个字段是自然语言短语）→ 用于 RAG 逐字段 embedding 软匹配，**不传递给主 LLM**
+2. **自然语言指令**（`implicit_instruction`）→ 注入 `[USER_INTENT_TAG]` 区块给主 LLM，提升生成准确度
+
+> 为什么是"结构化字段 + 逐字段 embedding 软匹配"而非整段文本 embedding？
+> - 整段文本 embedding 将情绪、动作、场景所有信息混在一个向量里，无法区分"哪个维度匹配上了"
+> - 结构化字段定义"比什么"，embedding 软匹配定义"怎么比"——每个字段独立做 embedding 再逐字段比较
+> - 例如：入库记忆 `emotional_tone: "冷峻下的愤怒"` vs 用户意图 `emotional_tone: "压抑中寻求突破"` → 同字段 embedding 软匹配，语义相近则情绪维度对齐
+> - 可解释性强：可以精确知道"情绪匹配上了但动作没匹配上"
 
 **RP 场景的记忆类型分层**：
 
 | 记忆类型 | 内容 | 检索方式 |
 |---------|------|---------|
-| **事实记忆** | 谁做了什么、在哪里 | 原始查询字面匹配 |
-| **氛围记忆** | 场景张力、情绪基调、沉默压力 | **意图修正查询匹配（核心）** |
+| **事实记忆** | 谁做了什么、在哪里 | 结构化 entities 字段匹配 |
+| **氛围记忆** | 场景张力、情绪基调、沉默压力 | 结构化 emotional_tone + scene_type 字段 embedding 匹配 |
 | **关系记忆** | 角色间当前状态 | `[CHARACTER_SITUATION]` 直接注入 |
-| **剧情模板** | 类似场景的发展模式、动作→反应的套路 | **意图修正查询匹配（核心）** |
+| **剧情模板** | 类似场景的发展模式、动作→反应的套路 | 结构化 action_type + pacing 字段 embedding 匹配 |
 
 **意图感知 RAG 流程**：
 
 ```mermaid
 graph LR
     A[用户输入<br/>*我点了一支烟*] --> B[IntentTagger<br/>轻量LLM]
-    B --> C[意图解析]
-    C --> D1[原始查询<br/>保底召回事实记忆]
-    C --> D2[修正查询<br/>召回氛围记忆+剧情模板]
-    C --> D3[场景关键词<br/>召回关系上下文]
-    D1 --> E[多路召回]
-    D2 --> E
-    D3 --> E
-    E --> F[基于意图相关度重排]
+    B --> C[双字段输出]
+    C --> D1[结构化数据<br/>逐字段embedding软匹配]
+    C --> D2[implicit_instruction<br/>注入USER_INTENT_TAG]
+    D1 --> E[与入库记忆的<br/>对应字段逐一匹配]
+    E --> F[综合评分<br/>Σ字段匹配度×字段权重]
     F --> G[Top-5 注入主LLM]
+    D2 --> H[WORKING_MEMORY末尾<br/>追加USER_INTENT_TAG]
+    H --> G
 ```
 
-**IntentTagger → RAG 查询扩展器**：
-
-```python
-async def intent_aware_search(self, user_input: str, context: dict, top_k: int = 5) -> List[str]:
-    """意图感知 RAG：先解析意图，再生成多路查询，最后合并重排"""
-    
-    # Step 1: IntentTagger 解析用户输入的真实意图
-    intent = await self.intent_tagger.analyze(user_input, context)
-    # 返回: {input_type, user_expectation, confidence, implicit_instruction,
-    #        scene_keyword, emotional_tone, tension_level}
-    
-    # Step 2: 生成三路查询
-    queries = []
-    
-    # 路 1: 原始查询（保底，召回事实记忆）
-    queries.append({"query": user_input, "weight": 0.3, "type": "literal"})
-    
-    # 路 2: 意图修正查询（核心，召回氛围记忆+剧情模板）
-    # 例: "角色在紧张谈判中通过小动作释放压力，寻找其他角色对此类行为的反应模式"
-    if intent.confidence > 0.6:
-        implicit_query = await self.query_expander.expand(user_input, intent)
-        queries.append({"query": implicit_query, "weight": 0.5, "type": "intent"})
-    
-    # 路 3: 场景关键词查询（召回关系上下文）
-    if intent.scene_keyword:
-        queries.append({"query": intent.scene_keyword, "weight": 0.2, "type": "scene"})
-    
-    # Step 3: 多路召回
-    all_results = []
-    for q in queries:
-        results = await self._faiss_search(q["query"], top_k=3)
-        for r in results:
-            all_results.append({"memory": r, "source_weight": q["weight"], "type": q["type"]})
-    
-    # Step 4: 基于意图相关度重排
-    # 优先保留 intent 类型召回的结果，其次 scene，最后 literal
-    ranked = sorted(all_results,
-        key=lambda x: (x["source_weight"] * self._intent_relevance_score(x["memory"], intent)),
-        reverse=True)
-    
-    # 去重后返回 Top-K
-    seen = set()
-    final = []
-    for item in ranked:
-        if item["memory"] not in seen:
-            seen.add(item["memory"])
-            final.append(item["memory"])
-        if len(final) >= top_k:
-            break
-    return final
-```
-
-**IntentTagger 输出示例**：
+**统一结构化数据格式（入库 + 意图识别共用）**：
 
 ```json
 {
-  "input_type": "纯动作",
-  "user_expectation": "B",
-  "confidence": 0.85,
-  "implicit_instruction": "用户已完成'点烟'动作，请渲染房间内其他角色对此的反应、环境氛围变化，不要替用户生成后续动作。",
-  "scene_keyword": "谈判僵局 动作打破沉默",
+  "scene_type": "谈判/对峙",
+  "action_type": "小动作打破沉默",
   "emotional_tone": "压抑中寻求突破",
-  "tension_level": 0.7
+  "tension_description": "表面平静下的暗流涌动，一根针掉在地上都能听见",
+  "entities": ["user", "Weiss"],
+  "pacing": "停顿后的小动作"
 }
 ```
 
-**QueryExpander 生成的修正查询示例**：
+> **为什么不用数字评分？** 不同模型对同一情绪张力场景的打分不一致，Kimi 打的 0.7 和 DeepSeek 打的 0.7 可能对应完全不同的张力感受。统一用自然语言描述，匹配时走 embedding 语义相似度。
 
-| 用户输入 | 修正后查询 |
-|---------|-----------|
-| `*我点了一支烟*` | `角色在紧张谈判中通过小动作释放压力，寻找其他角色对此类行为的反应模式` |
-| `*叹气* 算了...` | `角色表现出退让情绪后，对方的追问模式或安慰行为` |
-| `*我转身离开房间*` | `离别场景的氛围渲染，门关上后的回声，角色追出去的冲动` |
-| `"你觉得怎么样？"` | `基于角色性格与当前关系的真实回答模式，非敷衍回应` |
+**字段定义**：
+
+| 字段 | 类型 | 匹配方式 | 权重 | 说明 |
+|------|------|---------|------|------|
+| `scene_type` | 自然语言短语 | embedding 语义相似度 | 0.20 | 场景类型，如"谈判/对峙"、"宿舍私聊"、"战斗" |
+| `action_type` | 自然语言短语 | embedding 语义相似度 | 0.25 | 核心行为模式，如"用点烟打破沉默" |
+| `emotional_tone` | 自然语言短语 | embedding 语义相似度 | 0.20 | 情绪基调，如"压抑中寻求突破" |
+| `tension_description` | 自然语言短语 | embedding 语义相似度 | 0.10 | 张力描述，替代数字评分 |
+| `entities` | 字符串列表 | 集合重叠度 Jaccard | 0.15 | 涉及角色名列表 |
+| `pacing` | 自然语言短语 | embedding 语义相似度 | 0.10 | 节奏感，如"停顿后的小动作" |
+
+> **为什么 entities 用集合重叠而非 embedding？** 角色名是专有名词，embedding 语义空间不稳定（"Weiss"和"Ruby"的 embedding 距离可能很近但实际是不同角色）。直接用字符串集合的 Jaccard 系数更精确可靠。
 
 **与现有架构的融合点**：
 
-- **Day 3 LangGraph**：`IntentTagger` 节点位于 `InputReceive` 之后、`MemoryRetrieve` 之前；`MemoryRetrieve` 节点从单路查询升级为**"修正查询粗排 + 标签精排 + 时间加权"**
+- **Day 3 LangGraph**：`IntentTagger` 节点位于 `InputReceive` 之后、`MemoryRetrieve` 之前；`MemoryRetrieve` 节点从单路查询升级为 **"expanded_scene 粗排 + 逐字段精排 + 时间加权"**
 - **AgentState 新增字段**：
-  - `intent_rag_queries: List[str]` — 意图修正后的查询列表
-  - `intent_tags: List[{category, label, embedding}]` — 用户输入标签（用于召回时标签匹配）
-- **Day 2 现有 RAG**：保留时间加权 + 动态归一化，叠加标签驱动语义召回层
+  - `intent_structure: Dict[str, str]` — 意图结构化数据（用于召回时逐字段匹配）
+  - `implicit_instruction: str` — 导演指令（用于注入 USER_INTENT_TAG）
+- **Day 2 现有 RAG**：保留时间加权 + 动态归一化，叠加结构化逐字段匹配层
 - **成本**：每轮额外一次轻量 LLM 调用（~300 tokens 输入 / ~150 tokens 输出，约 0.03-0.05 元）
 
 **关键回退策略**：
 - `confidence < 0.6` → 跳过意图修正，直接使用原始查询（避免低置信度误推断）
 - IntentTagger API 失败 → 降级为原始查询，不阻断主流程
-- 修正查询召回结果为空 → 兜底使用原始查询结果
+- 结构化字段为空 → 对应字段权重归零，剩余字段权重等比放大
+- 所有结构字段均为空 → 降级为整段 expanded_scene embedding 检索
 
-**📌 标签驱动的语义召回（Tag-Embedding RAG）—— 通用化的意图匹配**
 
-> 经讨论确认：仅靠 **embedding 字面相似度** 无法解决 RP 场景的语义鸿沟问题。用户输入 `*我点了一支烟*` 的 embedding 是"烟草/点燃/动作"，但 LLM 需要生成的是"他人反应+氛围渲染"——两者语义空间不同。**标签体系的作用是在入库时就为记忆打上"行为模式"和"场景氛围"的语义标记，召回时从"用户行为"跳到"角色反应模式"。**
->
-> 关键设计：**标签不限定枚举值，由 LLM 自由生成自然语言短语，通过标签自身的 embedding 做软匹配**。这样无论世界观是奇幻、校园还是科幻，标签都能自适应。
+**入库结构化字段提取（入库时自动提取）**
 
-**为什么 embedding 字面匹配不够？**
+**时机**：`summarize_and_store()` 中，Kimi 总结完记忆后、入库前增加一步结构化字段提取。
 
-| 用户输入 | embedding 字面语义 | 真实需求 | 需要召回的记忆 |
-|---------|------------------|---------|-------------|
-| `*我点了一支烟*` | 烟草、点燃、动作 | 渲染他人反应+氛围 | "Weiss 打翻酒杯，全场寂静..." |
-| `*叹气* 算了...` | 叹息、放弃 | 对方的追问或安慰 | "Ruby 低下头：'好吧...'" |
-| `"你觉得怎么样？"` | 询问、意见 | 基于关系的真实回答 | "Ruby 认真地看着你：'我相信你'" |
-
-问题：用户输入的 embedding 和需要召回的记忆文本的 embedding **语义空间完全不同**，纯向量检索会召回"以前有没有点烟"而非"打破沉默时他人的反应"。
-
-**标签设计原则：自由标签 + embedding 软匹配**
-
-不预设枚举值（如 `[宿舍私聊/谈判僵局/...]`），而是让 LLM 根据内容**自由生成自然语言短语**，每个标签独立做 embedding，召回时比较语义相似度。
-
-```json
-{
-  "memory_text": "信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang...",
-  "embedding": [0.12, -0.05, ...],
-  "tags": [
-    {"category": "scene_atmosphere", "label": "宿舍夕阳下的温情告别", "embedding": [...]},
-    {"category": "behavior_pattern", "label": "承诺与保护宣言", "embedding": [...]},
-    {"category": "emotional_tone", "label": "坚定中带着不安", "embedding": [...]},
-    {"category": "entities", "label": "Ruby, Yang", "embedding": [...]},
-    {"category": "pacing", "label": "慢节奏深情对话", "embedding": [...]}
-  ]
-}
+**Prompt（结构提取器）**：
 ```
-
-**标签 category 定义（通用，不限世界观）**：
-
-| category | 作用 | 示例 |
-|----------|------|------|
-| `scene_atmosphere` | 场景氛围 + 环境 + 时空背景 | "黄昏房间里的沉默"、"宴会厅的紧张对峙"、"战后废墟的寂寥" |
-| `behavior_pattern` | 核心行为模式 | "用小动作打破沉默"、"承诺与保护宣言"、"试探性靠近"、"赌气式离开" |
-| `emotional_tone` | 情绪基调 | "压抑中寻求突破"、"坚定中带着不安"、"甜蜜却心虚" |
-| `entities` | 涉及角色 | "Ruby, Yang, user"、"Weiss" |
-| `pacing` | 节奏感 | "慢节奏深情对话"、"快节奏连续动作"、"停顿后爆发" |
-
-> **为什么 5 个 category 就够了？** RP 场景的核心是"谁在什么氛围下做了什么行为，情绪如何，节奏怎样"。5 个维度覆盖了从"场景"到"行为"到"情绪"到"节奏"的完整语义链。
-
-**入库标签提取（入库时自动打标签）**
-
-**时机**：`summarize_and_store()` 中，Kimi 总结完记忆后、入库前增加一步标签提取。
-
-**Prompt（标签提取器）**：
-```
-请分析以下剧情记忆，提取 3-5 个结构化标签。
+请分析以下剧情记忆，提取结构化字段用于后续语义检索。
 
 要求：
-1. 每个标签由 category + label 组成，category 必须从 [scene_atmosphere/behavior_pattern/emotional_tone/entities/pacing] 中选择
-2. label 用**自然语言短语**自由描述，不要受限于固定词汇，要准确捕捉记忆的"氛围"和"行为模式"
-3. 重点提取"如果用户做出类似行为，应该召回这段记忆"的语义特征
+1. 每个字段用自然语言短语自由描述，不要受限于固定词汇
+2. 重点提取"如果用户做出类似行为，应该召回这段记忆"的语义特征
+3. scene_type 概括场景类型
+4. action_type 概括核心行为模式
+5. emotional_tone 概括情绪基调
+6. tension_description 用自然语言描述张力状态
+7. entities 列出涉及的角色名
+8. pacing 概括节奏感
 
 记忆：{memory_text}
 
-输出JSON数组：
-[
-  {"category": "scene_atmosphere", "label": "..."},
-  {"category": "behavior_pattern", "label": "..."},
-  {"category": "emotional_tone", "label": "..."}
-]
+输出JSON：
+{
+  "scene_type": "...",
+  "action_type": "...",
+  "emotional_tone": "...",
+  "tension_description": "...",
+  "entities": ["..."],
+  "pacing": "..."
+}
 ```
 
 **入库示例**：
@@ -965,107 +907,147 @@ async def intent_aware_search(self, user_input: str, context: dict, top_k: int =
 ```json
 {
   "memory_text": "雪倪庄园宴会。Weiss在众目睽睽之下故意打翻酒杯，红酒洒在地毯上。全场寂静，她却没有道歉，只是冷冷地看着对面的叔父。",
-  "tags": [
-    {"category": "scene_atmosphere", "label": "宴会厅的紧张对峙，众目睽睽之下的公开挑战"},
-    {"category": "behavior_pattern", "label": "用破坏性小动作表达反抗，打破表面和平"},
-    {"category": "emotional_tone", "label": "冷峻下的愤怒，以沉默代替爆发"},
-    {"category": "entities", "label": "Weiss, 叔父"},
-    {"category": "pacing", "label": "先慢后快，小动作引发大反应"}
-  ]
+  "embedding": [0.12, -0.05, ...],
+  "structure": {
+    "scene_type": "宴会厅公开对峙",
+    "action_type": "用破坏性小动作表达反抗，打破表面和平",
+    "emotional_tone": "冷峻下的愤怒，以沉默代替爆发",
+    "tension_description": "全场死寂，所有目光聚焦在两人之间",
+    "entities": ["Weiss", "叔父"],
+    "pacing": "先慢后快，小动作引发大反应"
+  }
 }
 ```
 
-**用户输入标签（IntentTagger 扩展）**
-
-IntentTagger 解析用户输入时，**同时输出标签**，标签空间和入库标签完全一致。
+**意图识别时：IntentTagger 输出结构化数据（与入库格式完全一致）**
 
 ```json
 {
-  "input_type": "ACTION_ONLY",
+  "input_type": "纯动作",
   "user_expectation": "B",
   "confidence": 0.85,
-  "implicit_instruction": "用户已完成'点烟'动作，请渲染他人反应...",
-  "tags": [
-    {"category": "scene_atmosphere", "label": "黄昏房间里的沉默"},
-    {"category": "behavior_pattern", "label": "用点烟打破沉默"},
-    {"category": "emotional_tone", "label": "压抑中寻求突破"},
-    {"category": "entities", "label": "user"},
-    {"category": "pacing", "label": "停顿后的小动作"}
-  ]
+  "implicit_instruction": "用户已完成'点烟'动作，请渲染房间内其他角色对此的反应、环境氛围变化，不要替用户生成后续动作。",
+  "expanded_scene": "昏暗的房间里。user 点燃了一支烟，橘红色的火光在阴影中明灭不定，烟雾缓缓升腾，空气里弥漫着淡淡的烟草气息。",
+  "structure": {
+    "scene_type": "谈判/对峙",
+    "action_type": "用点烟打破沉默",
+    "emotional_tone": "压抑中寻求突破",
+    "tension_description": "表面平静下的暗流涌动",
+    "entities": ["user"],
+    "pacing": "停顿后的小动作"
+  }
 }
 ```
 
-**召回匹配机制：标签 embedding 相似度 + 修正查询 embedding + 时间加权**
+> **`expanded_scene` 和 `structure` 的关系**：
+> - `expanded_scene`：整段场景叙事文本，用于整段 embedding 粗排（保底召回）
+> - `structure`：结构化字段，用于逐字段 embedding 精排（精准匹配）
+> - 两者互补：粗排保证召回率下限，精排提升精准率
 
-召回不是单纯比较标签字符串是否相等，而是比较**标签 label 的 embedding 语义相似度**。
+**召回匹配算法：粗排 + 精排 + 时间加权**
 
 ```python
-async def tag_aware_search(self, user_input: str, intent: IntentResult, top_k: int = 5) -> List[str]:
-    """标签驱动的语义召回：标签embedding软匹配 + 修正查询embedding + 时间加权"""
+async def structured_aware_search(self, user_input: str, intent: IntentResult, top_k: int = 5) -> List[str]:
+    """结构化字段感知的语义召回：expanded_scene 粗排 + 逐字段精排 + 时间加权"""
     
-    # Step 1: 生成用户输入的修正查询 embedding
-    corrected_query = intent.corrected_query  # "角色在紧张谈判中通过小动作释放压力..."
-    query_emb = await self._get_embedding(corrected_query)
-    
-    # Step 2: FAISS 粗排：用修正查询做 embedding 检索，取 Top-20
+    # Step 1: 用 expanded_scene 做 embedding 粗排，取 Top-20
+    query_emb = await self._get_embedding(intent.expanded_scene)
     candidate_indices = await self._faiss_search(query_emb, top_k=20)
     
-    # Step 3: 标签精排：对候选记忆，计算标签匹配度
+    # Step 2: 逐字段结构化精排
     scored = []
     for idx in candidate_indices:
         memory = self.memories[idx]
         
-        # 3a: 修正查询的语义相似度
+        # 2a: expanded_scene 语义相似度（保底）
         semantic_score = cosine_similarity(query_emb, memory.embedding)
         
-        # 3b: 标签匹配度（category 相同的标签比较 embedding 相似度）
-        tag_score = 0.0
-        for user_tag in intent.tags:
-            for mem_tag in memory.tags:
-                if user_tag.category == mem_tag.category:
-                    sim = cosine_similarity(user_tag.embedding, mem_tag.embedding)
-                    tag_score += sim  # 累加所有同 category 的相似度
-        tag_score = min(tag_score / len(intent.tags), 1.0)  # 归一化
+        # 2b: 逐字段结构化匹配
+        field_scores = []
+        field_weights = {
+            "scene_type": 0.20,
+            "action_type": 0.25,
+            "emotional_tone": 0.20,
+            "tension_description": 0.10,
+            "entities": 0.15,
+            "pacing": 0.10
+        }
         
-        # 3c: 时间权重
-        time_weight = (memory.insert_seq / max_seq) ** gamma
+        for field, weight in field_weights.items():
+            if field == "entities":
+                # entities 用 Jaccard 集合重叠度
+                intent_entities = set(intent.structure.get("entities", []))
+                mem_entities = set(memory.structure.get("entities", []))
+                if intent_entities or mem_entities:
+                    overlap = len(intent_entities & mem_entities)
+                    union = len(intent_entities | mem_entities)
+                    field_score = overlap / union if union > 0 else 0.0
+                else:
+                    field_score = 0.0
+            else:
+                # 其他字段用 embedding 语义相似度
+                intent_text = intent.structure.get(field, "")
+                mem_text = memory.structure.get(field, "")
+                if intent_text and mem_text:
+                    intent_emb = await self._get_embedding(intent_text)
+                    mem_emb = await self._get_embedding(mem_text)
+                    field_score = cosine_similarity(intent_emb, mem_emb)
+                else:
+                    field_score = 0.0
+            
+            field_scores.append(field_score * weight)
         
-        # 复合排序
-        final_score = semantic_score * 0.4 + tag_score * 0.4 + time_weight * 0.2
+        structure_score = sum(field_scores)
+        
+        # 2c: 时间权重
+        all_seqs = [m.get("insert_seq", 0) for m in self.metadatas]
+        min_seq = min(all_seqs)
+        max_seq = max(all_seqs)
+        seq_range = max(max_seq - min_seq, 1)
+        seq = memory.get("insert_seq", min_seq)
+        normalized = (seq - min_seq) / seq_range
+        gamma = settings.rag_time_gamma
+        time_weight = normalized ** gamma
+        
+        # 复合排序：semantic×0.3 + structure×0.5 + time×0.2
+        final_score = semantic_score * 0.3 + structure_score * 0.5 + time_weight * 0.2
         scored.append((final_score, idx))
     
-    # Step 4: 排序取 Top-K
+    # Step 3: 排序取 Top-K
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [self.memories[idx] for _, idx in scored[:top_k]]
+    return [self.documents[idx] for _, idx in scored[:top_k]]
 ```
+
+> **为什么 structure 权重 0.5 最高？** 结构化逐字段匹配是这套方案的核心改进，保证召回结果在多个语义维度上都对齐。semantic 0.3 保底防止结构字段为空时召回率为零，time 0.2 保证新鲜度。
 
 **召回示例**：
 
-| 用户输入 | 用户标签 | 召回的记忆 | 记忆标签 | 匹配逻辑 |
-|---------|---------|-----------|---------|---------|
-| `*我点了一支烟*` | behavior=用点烟打破沉默 | "Weiss 打翻酒杯，全场寂静..." | behavior=用破坏性小动作表达反抗 | 标签 embedding 相似度高（都是"用动作打破沉默"） |
-| `*叹气* 算了...` | emotional=压抑中寻求突破 | "Ruby 低下头：'好吧...'" | emotional=无奈中的妥协 | 标签 embedding 相似度高 |
-| `"你觉得怎么样？"` | behavior=试探性询问 | "Ruby 认真地看着你：'我相信你'" | behavior=认真回应信任 | 修正查询 embedding 匹配 + entities 重叠 |
+| 用户输入 | 用户 structure | 入库记忆 structure | 匹配逻辑 |
+|---------|--------------|-------------------|---------|
+| `*点了一支烟*` | action_type=用点烟打破沉默<br>emotional_tone=压抑中寻求突破 | action_type=用破坏性小动作表达反抗<br>emotional_tone=冷峻下的愤怒 | action_type embedding 相似（都是"用动作打破沉默"）+ emotional_tone embedding 相似（都是"压抑/愤怒"情绪） |
+| `*叹气* 算了...` | emotional_tone=无奈中的退让<br>action_type=情绪表达后等待回应 | emotional_tone=妥协中的期待<br>action_type=示弱后寻求安慰 | emotional_tone 高度匹配 + action_type 匹配 |
+| `"你觉得怎么样？"` | scene_type=一对一对话<br>entities=[user, Ruby] | scene_type=宿舍私聊<br>entities=[Ruby, Yang] | scene_type 匹配 + entities 部分重叠 |
 
 **与现有架构的融合点**：
 
 | 现有模块 | 修改 |
 |---------|------|
-| `summarize_and_store()` | 入库前增加 `_extract_tags()`，为每条记忆生成 3-5 个标签 + 标签 embedding |
-| `IntentTagger.analyze()` | 输出中增加 `tags` 字段，和用户输入同步打标签 |
-| `search()` | 从单路 embedding 检索升级为**"修正查询粗排 + 标签精排 + 时间加权"** |
-| FAISS `metadata` | 新增 `tags` 字段，存储 `List[{category, label, embedding}]` |
-| 成本 | 入库时额外一次轻量 LLM 调用（标签提取，~200 tokens）；召回时无额外 LLM 调用 |
+| `summarize_and_store()` | 入库前增加 `_extract_structure()`，为每条记忆生成 6 个结构化字段 + 字段 embedding |
+| `IntentTagger.analyze()` | 输出中增加 `structure` 字段，和入库结构完全一致 |
+| `search()` | 从单路 embedding 检索升级为 **"expanded_scene 粗排 + 逐字段精排 + 时间加权"** |
+| FAISS `metadata` | 新增 `structure` 字段，存储 `Dict[str, str]` 结构化数据 |
+| 新增 `_get_field_embedding()` | 对每个字段独立生成 embedding 用于匹配 |
+| 成本 | 入库时额外一次轻量 LLM 调用（结构提取，~200 tokens）；召回时每字段一次 embedding 计算（6 次，~120ms 总计） |
 
 **关键设计决策**：
 
 | 问题 | 决策 | 理由 |
 |------|------|------|
-| 标签是硬枚举还是自由生成？ | **自由生成自然语言短语** | 通用，不限世界观，不同 RP 场景自适应 |
-| 标签匹配是字符串相等还是语义相似？ | **标签 embedding 语义相似** | "用点烟打破沉默"和"用动作打破沉默"语义相近但不等字 |
-| 标签 category 有几个？ | **5 个固定 category** | 覆盖 RP 核心语义维度，category 固定保证召回时对齐 |
-| 标签权重 vs embedding 权重？ | **标签 0.4 + 查询 embedding 0.4 + 时间 0.2** | 标签保行为模式精准，embedding 保语义泛化，时间保新鲜 |
-| 标签存在哪里？ | **FAISS metadata + 独立 JSON** | 召回时读取 metadata 中的标签 embedding |
+| 数字评分还是自然语言？ | **自然语言描述** | 不同模型打分不一致，自然语言 + embedding 软匹配更稳定 |
+| 整段 embedding 还是逐字段？ | **expanded_scene 粗排 + 逐字段精排** | 粗排保下限，精排提精准，两者互补 |
+| entities 用 embedding 还是集合？ | **集合 Jaccard 系数** | 角色名是专有名词，embedding 不稳定，集合更精确 |
+| 字段权重如何分配？ | action_type 0.25 最高 | 行为模式是 RP 场景最核心的匹配维度 |
+| 结构字段为空时？ | 该字段权重归零，其他字段权重等比放大 | 不回退到整段 embedding，保持结构化匹配 |
 
 **三层记忆架构（v0.8.0）**
 
@@ -2016,37 +1998,25 @@ InputReceive → [IntentTagger] → EmotionAnalyze → ... → LLMGenerate
 
 ### 四、轻量 LLM 的 Prompt 设计
 
+> **v0.7.0 更新**：实际使用 Kimi k2.6 模型（非 Kimi lite），因其有 `reasoning_content`（思维链），长 prompt 会导致 reasoning 消耗过多 token 使 content 为空。已将 SYSTEM_PROMPT 从 845 字符精简至 451 字符。
+
 ```
-你是角色扮演场景中的用户意图分析师。
+你是角色扮演场景中的用户意图分析师。分析用户输入，输出 JSON。
 
-【当前场景上下文】
-场景类型: {scene_type}
-活跃角色: {active_entities}
-用户与主角关系: {user_relationship_summary}
+字段：
+- input_type: 纯动作/纯台词/动作+台词/情绪表达/场景指令/其他
+- user_expectation: A(继续自己行动)/B(看其他角色反应)/C(推进剧情)/D(等待回应)
+- confidence: 0-1
+- implicit_instruction: 导演指令，如"请渲染环境氛围"、"不要替用户行动"
+- expanded_scene: 第三人称场景描写，含地点/动作/氛围，不含元指令
+- structure.scene_type: 场景类型
+- structure.action_type: 核心行为模式
+- structure.emotional_tone: 情绪基调
+- structure.tension_description: 自然语言描述张力
+- structure.entities: 角色名列表
+- structure.pacing: 节奏感
 
-【用户输入】
-{user_input}
-
-【分析任务】
-1. 输入类型: [纯动作/纯台词/动作+台词/情绪表达/场景指令/其他]
-2. 用户期望 LLM 输出什么:
-   - A. 用户想继续自己的行动（LLM 应帮助推进用户角色）
-   - B. 用户想看其他角色反应（LLM 应渲染环境和他人）
-   - C. 用户想推进剧情（LLM 应发展情节）
-   - D. 用户在等待回应（LLM 应让其他角色接话）
-3. 置信度: 0-1
-4. 建议的 Prompt 修正（implicit_instruction）: [导演指令风格，指导主 LLM 生成方向]
-5. 场景化叙事展开（expanded_scene）: [将用户输入扩展为与 FAISS 记忆同风格的场景描写，包含地点、动作、氛围，不含"请渲染"等指令]
-
-输出为JSON，不要解释。
-
-> **expanded_scene 写作要求**：
-> - 使用第三人称叙述视角
-> - 补充从上下文中可推断的地点和氛围细节
-> - 保留用户台词（如有）并加引号
-> - 纯动作用环境描写填充（光线、声音、气味等）
-> - **禁止出现** "请渲染"、"等待反应"、"期待回应" 等元指令
-> - 风格应与入库记忆一致： `"信标学院宿舍。夕阳斜照进窗户，Ruby转身看向Yang..."`
+输出纯 JSON，不要解释。
 ```
 
 **返回示例**：
@@ -2068,19 +2038,16 @@ InputReceive → [IntentTagger] → EmotionAnalyze → ... → LLMGenerate
 
 ### 五、注入主 LLM 的方式
 
-不修改用户可见的输入，而是在 `[WORKING_MEMORY]` 区块末尾追加 `[USER_INTENT_TAG]`（使用 `implicit_instruction`）：
+不修改用户可见的输入，而是在最后一条用户消息末尾追加 `[USER_INTENT_TAG]`（仅使用 `implicit_instruction`，**不注入任何结构化字段**）：
 
 ```
-[WORKING_MEMORY]
-user: *我点了一支烟*
-
 [USER_INTENT_TAG]
-类型: ACTION_ONLY
-推断: 用户已完成动作，需要系统生成其他角色反应和环境反馈
-禁止: 不要替用户生成后续动作或台词
+导演指令：用户已完成动作，请渲染其他角色反应和环境氛围，不要替用户生成后续动作或台词。
 ```
 
-这样主 LLM 看到的不是被篡改的用户输入，而是**被注释了意图的上下文**——用户无感知，但 LLM 获得了关键的"导演笔记"。
+> **关键设计原则**：`[USER_INTENT_TAG]` 只注入自然语言 `implicit_instruction`，**绝不注入结构化数据**（如 `input_type`、`confidence`、`structure` 等）。结构化数据会诱导 LLM 输出结构化内容，破坏 RP 沉浸感（如同小说中出现代码）。
+
+**v0.7.0 位置调整**：`[WORKING_MEMORY]` + `[USER_INTENT_TAG]` 从 System Prompt 移至最后一条用户消息末尾，避免 System Prompt 过长稀释注意力。
 
 ### 六、与 RAG 召回的衔接
 
@@ -2113,11 +2080,18 @@ FAISS.search() → 召回与"点烟/房间/氛围"相关的历史记忆
 
 ### 七、成本与延迟分析
 
+> **v0.7.0 更新**：实际使用 Kimi k2.6（非 Kimi lite），因其有 `reasoning_content` 思维链，延迟较高但输出质量更好。
+
 | 模型 | 成本/千 tokens | 输入长度 | 输出长度 | 单轮额外成本 | 额外延迟 |
 |------|---------------|---------|---------|-------------|---------|
-| Kimi lite | ~0.1 元 | ~300 | ~150 | ~0.05 元 | ~0.5s |
-| Qwen Turbo | ~0.06 元 | ~300 | ~150 | ~0.03 元 | ~0.4s |
-| DeepSeek Chat | ~0.05 元 | ~300 | ~150 | ~0.025 元 | ~0.6s |
+| Kimi k2.6 | ~0.2 元 | ~500 | ~600 | ~0.15 元 | ~5-15s（含 reasoning） |
+| DeepSeek Chat（回退） | ~0.05 元 | ~500 | ~600 | ~0.03 元 | ~0.6s |
+
+**配置要点**（Kimi k2.6 适配）：
+- `temperature` 必须为 **1.0**（模型限制，其他值报 400 错误）
+- `max_tokens` 至少 **2048**（reasoning 会消耗大量 token，512 不够）
+- `timeout` 至少 **60s**（reasoning 较慢）
+- SYSTEM_PROMPT 需精简（845→451 字符），减少 reasoning 负担
 
 **关键设计**：置信度低于 0.6 时跳过修正，直接透传原输入——避免低置信度下的误推断污染主流程。
 
@@ -2147,4 +2121,51 @@ FAISS.search() → 召回与"点烟/房间/氛围"相关的历史记忆
 
 ---
 
-*本文档最后更新：2026-05-09*
+## 附录十一、关键 Bug 修复记录
+
+### Bug 1：DeepSeek 流式输出丢失段落分隔符（2026-05-10）
+
+#### 现象
+
+DeepSeek 返回的 RP 文本本应包含段落分隔（环境描写 → NPC 反应 → 行动空间），但 TAVO 端渲染后显示为一整段无换行的连续文本。
+
+#### 排查过程
+
+| 步骤 | 操作 | 结果 |
+|------|------|------|
+| 1 | 在 `[USER_INTENT_TAG]` 和 `[OUTPUT_SPEC]` 中添加"请分段输出"的格式指令 | ❌ 无效，DeepSeek 仍输出一整段 |
+| 2 | 将 `[WORKING_MEMORY]` + `[USER_INTENT_TAG]` 从 System Prompt 移至最后一条用户消息末尾 | ❌ 无效 |
+| 3 | 将格式指令从列表形式改为语义描述 | ❌ 无效 |
+| 4 | 在 `[OUTPUT_SPEC]` 中加入 few-shot 三段式输出示例 | ❌ 无效 |
+| 5 | **怀疑 SSE 流式处理层可能丢失了换行** → 添加调试日志，检查 DeepSeek 原始返回是否包含 `\n\n` | ✅ **日志确认：`含双换行(段落): True`** — DeepSeek 本身正确返回了带段落分隔的文本 |
+| 6 | 定位到 `_handle_streaming_request()` 中的 SSE 分块逻辑 | 🔍 **根因确认** |
+
+#### 根因
+
+位于 [`app/api/completions.py:1026-1060`](app/api/completions.py:1026) 的 SSE 流式分块逻辑：
+
+1. 先用 `full_content.split('\n\n')` 按段落切分
+2. 再用 `sentence_delimiters.split(para)` 对每个段落按句子切分
+3. **关键问题**：切分后生成的 `segments` 列表中，段落之间的 `\n\n` 分隔符被丢弃了。TAVO 收到的是一个个独立的句子片段，没有段落间距信息，因此渲染为连续文本。
+
+#### 修复方案
+
+**第一次尝试**（失败）：将空段落作为独立 `"\n"` 片段插入 segments 列表。TAVO 不渲染独立的换行片段。
+
+**最终修复**（成功）：将 `\n\n` 追加到每个段落 segment 的文本内容末尾（最后一个段落除外），使换行符作为文本内容的一部分发送给 TAVO。
+
+```python
+# 段落末尾追加 \n\n，保留段落间距
+# 最后一段不加（避免末尾多余空行）
+if i < len(paragraphs) - 1:
+    para_text += '\n\n'
+```
+
+#### 经验教训
+
+1. **不要假设 LLM 不听话** — 先验证 LLM 的原始输出是否符合预期（添加 `repr()` 调试日志），再排查下游处理逻辑。
+2. **SSE 流式分块是高风险区域** — 任何对文本的分割/重组操作都可能破坏格式，修改后必须用真实 LLM 输出验证。
+3. **few-shot 示例比指令更有效** — DeepSeek 对输出示例的遵循度远高于格式指令，但前提是下游处理层不破坏格式。
+4. **调试日志要打在关键链路节点** — 在"LLM 原始输出"和"TAVO 接收内容"两个节点分别打日志，才能快速定位问题在哪一层。
+
+*本文档最后更新：2026-05-10（v0.7.0）*

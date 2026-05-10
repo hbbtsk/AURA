@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api.completions_simple import initialize_aura
+from app.api.completions import initialize_aura
 from app.config import settings
 
 @asynccontextmanager
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AURA",
     description="Agentic Unified Roleplay Assistant - Tavo→AURA→LLM桥梁",
-    version="0.2.0",
+    version="0.6.0",
     lifespan=lifespan
 )
 
@@ -39,9 +39,9 @@ app.add_middleware(
     allow_headers=["*", "X-Tavo-Debug"],  # 允许Tavo调试头
 )
 
-# 注册路由 - 使用简化版本
-from app.api.completions_simple import router as simple_router
-app.include_router(simple_router, prefix="/v1")
+# 注册路由
+from app.api.completions import router as aura_router
+app.include_router(aura_router, prefix="/v1")
 
 # 健康检查端点
 @app.get("/health")

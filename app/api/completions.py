@@ -28,9 +28,11 @@ from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.config import settings, get_llm_config, validate_llm_config
+from app.config import settings, get_llm_config, validate_llm_config, LLMConfig
 from app.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
+from app.intent_tagger import intent_tagger
+from app.memory.models import IntentStructure, IntentResult
 
 # 确保日志目录存在
 LOG_DIR = "logs"
@@ -157,10 +159,11 @@ async def chat_completion(
     x_tavo_debug: Optional[str] = Header(None, alias="X-Tavo-Debug")
 ):
     """
-    AURA简化版本 - 支持真正的流式转发
-    1. 接收Tavo请求（支持流式）
-    2. 转发给配置的LLM后端
-    3. 非流式：返回标准JSON；流式：透传 SSE 流
+    AURA 核心 API — 接收 Tavo 请求，经 Prompt 区块重组 + RAG 记忆召回后转发给 LLM 后端
+    1. 接收 Tavo 请求（支持流式）
+    2. Prompt 拆解 + 9 区块重组 + RAG 语义召回
+    3. 转发给配置的 LLM 后端
+    4. 非流式：返回标准 JSON；流式：透传 SSE 流
     """
     session_id = f"aura_{int(time.time())}_{id(request)}"
     
@@ -211,6 +214,21 @@ async def chat_completion(
         # 统计文件大小
         file_size = os.path.getsize(dump_file)
         logger.info(f"[TAVO→AURA] Prompt 已保存到: {dump_file} ({file_size}字节)")
+
+        # [调试日志] 同时保存 TAVO 原始请求到独立文件（tavo_input_YYYYMMDD_HHMMSS.txt）
+        tavo_input_file = os.path.join(prompt_dump_dir, f"tavo_input_{time_str}.txt")
+        with open(tavo_input_file, "w", encoding="utf-8") as f:
+            f.write(f"=== TAVO 原始请求 ===\n")
+            f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"模型: {request.model}\n")
+            f.write(f"流式: {request.stream}\n")
+            f.write(f"消息数: {len(request.messages)}\n")
+            f.write(f"{'='*60}\n\n")
+            for i, msg in enumerate(request.messages):
+                f.write(f"--- 消息 {i} | role: {msg.role} | 长度: {len(msg.content)}字符 ---\n")
+                f.write(msg.content)
+                f.write("\n\n")
+        logger.info(f"[TAVO→AURA] 调试日志已保存: {tavo_input_file}")
     except Exception as e:
         logger.warning(f"[TAVO→AURA] 保存 Prompt 失败: {e}")
 
@@ -218,7 +236,7 @@ async def chat_completion(
     # 2. 获取后端配置
     # ============================================================
     backend = get_backend_for_model(request.model)
-    llm_config = get_llm_config(backend)
+    llm_config = get_llm_config(backend, scene="main")
     if not llm_config or not llm_config.api_key:
         raise HTTPException(status_code=503, detail=f"后端 {backend} 未正确配置")
 
@@ -286,6 +304,14 @@ async def chat_completion(
         # - has_user_prefix == False → 直接组装 8 个标准区块
         #
         # v0.6.0 新增：RAG 语义召回替代全量长记忆注入
+        # v0.7.0 新增：3 层记忆（WORKING + RECENT + LONG_TERM）+ IntentTagger
+        #
+        # 区块位置策略（v0.7.1）：
+        # - System Prompt 区块（blocks）：MAIN_PROMPT / PROTOCOL / CONSTRAINTS /
+        #   CHARACTER_CARD / USER_PROFILE / CURRENT_STATE / RECENT_MEMORY /
+        #   LONG_TERM_MEMORY / WORLD_CONTEXT / OUTPUT_SPEC
+        # - 近因区块（追加到最后一条 user 消息）：WORKING_MEMORY + USER_INTENT_TAG
+        #   利用近因效应，让 LLM 在生成回复时最近看到的就是当前语境+导演指令
         # ============================================================
         messages_list = [msg.model_dump() for msg in request.messages]
         original_system = decomposed["raw"]["system_content"]
@@ -343,12 +369,55 @@ async def chat_completion(
 - （此区块将在 Day 4 由 StateManager 从数据库读取真实状态后生成）"""
         blocks.append(current_state_block)
 
-        # --- 区块6: [RECENT_DIALOGUE] 最近 N 轮对话（拆解自 TAVO） ---
+        # ================================================================
+        # 3c-1. IntentTagger：解析用户输入意图（v0.7.0）
+        # ================================================================
         dialogue = decomposed.get("dialogue", {})
         recent_rounds = dialogue.get("recent_rounds", [])
         last_input = dialogue.get("last_user_input", "")
 
-        working_memory_lines = ["[RECENT_DIALOGUE]"]
+        intent_result = None
+        if last_input:
+            try:
+                # 构建上下文信息
+                context = {
+                    "scene_type": "未知",
+                    "active_entities": [],
+                }
+                # 尝试从角色卡中提取活跃角色
+                if sys_comp.get("character_card"):
+                    # 简单提取：取角色卡第一行作为当前角色
+                    first_line = sys_comp["character_card"].split("\n")[0].strip()
+                    if first_line:
+                        context["active_entities"] = [first_line]
+
+                intent_result = await intent_tagger.analyze(last_input, context=context)
+                if intent_result and intent_result.should_use():
+                    logger.info(
+                        f"[AURA→意图] 意图解析成功 | "
+                        f"type={intent_result.input_type}, "
+                        f"confidence={intent_result.confidence:.2f}"
+                    )
+                else:
+                    logger.debug(
+                        f"[AURA→意图] 意图解析置信度不足或为空 "
+                        f"(confidence={intent_result.confidence if intent_result else 0}), 跳过意图修正"
+                    )
+                    intent_result = None
+            except Exception as e:
+                logger.warning(f"[AURA→意图] 意图解析失败（不影响主流程）: {e}")
+                intent_result = None
+
+        # ================================================================
+        # 3c-2. 3 层记忆注入（v0.7.0）
+        # ================================================================
+
+        # --- 区块6a: [WORKING_MEMORY] 工作记忆 — 最近 5 轮对话 ---
+        # 注意：WORKING_MEMORY 不加入 blocks（System Prompt），
+        # 而是在 3d 阶段合并到最后一条 user 消息末尾，利用近因效应
+        working_memory_lines = ["[WORKING_MEMORY]"]
+        working_memory_lines.append("（以下为最近 5 轮对话，反映当前即时语境）")
+        working_memory_lines.append("")
         if recent_rounds:
             for i, round_data in enumerate(recent_rounds):
                 user_msg = round_data.get("user", "")
@@ -363,29 +432,58 @@ async def chat_completion(
         if last_input:
             working_memory_lines.append("  [当前输入] %s: %s%s" % (user_name or "用户", last_input[:200], "..." if len(last_input) > 200 else ""))
 
-        blocks.append("\n".join(working_memory_lines))
+        # 暂存 WORKING_MEMORY 文本，稍后合并到 user 消息末尾
+        working_memory_text = "\n".join(working_memory_lines)
+
+        # --- 区块6b: [RECENT_MEMORY] 近时记忆 — 最近 10 条记忆摘要 ---
+        try:
+            recent_summaries = await memory_manager._get_recent_memories_for_context(10)
+            if recent_summaries and recent_summaries != "（无）":
+                recent_memory_lines = ["[RECENT_MEMORY]"]
+                recent_memory_lines.append("（以下为最近 10 条记忆摘要，反映近期剧情发展）")
+                recent_memory_lines.append("")
+                for line in recent_summaries.split("\n"):
+                    line = line.strip()
+                    if line:
+                        recent_memory_lines.append(line)
+                blocks.append("\n".join(recent_memory_lines))
+        except Exception as e:
+            logger.debug(f"[AURA→记忆] 获取近时记忆失败（跳过）: {e}")
 
         # ================================================================
-        # --- 区块7: [LONG_TERM_MEMORY] 长记忆 — RAG 语义召回（v0.6.0）
+        # --- 区块7: [LONG_TERM_MEMORY] 长记忆 — 结构化 RAG 召回（v0.7.0）
         # ================================================================
-        # 策略：用当前用户输入作为 query，从 FAISS 召回 Top-5 相关记忆
-        # 注意：FAISS 不可用时应直接报错，不应静默降级为全量注入
-        # RAG 召回
+        # 策略：
+        # 1. 如果有 IntentResult，用 expanded_scene 做 embedding 粗排 + query_structure 做逐字段精排
+        # 2. 如果没有 IntentResult，降级为传统 embedding + 时间加权
+        # ================================================================
         query_text = last_input or user_name or ""
-        rag_memories = await memory_manager.search(query_text, top_k=5)
 
-        if rag_memories:
+        if intent_result and intent_result.should_use():
+            # 结构化 RAG 召回
+            rag_memories = await memory_manager.structured_aware_search(
+                query=intent_result.expanded_scene or query_text,
+                top_k=5,
+                query_structure=intent_result.structure,
+            )
             logger.info(
-                f"[AURA→RAG] 语义召回成功 | query=\"{query_text[:50]}...\" | "
-                f"召回 {len(rag_memories)} 条"
+                f"[AURA→RAG] 结构化召回 | query=\"{query_text[:40]}...\" | "
+                f"召回 {len(rag_memories)} 条 | "
+                f"意图: {intent_result.input_type}"
             )
         else:
-            logger.info("[AURA→RAG] 召回为空（FAISS 中暂无匹配记忆）")
+            # 降级：传统 embedding + 时间加权
+            rag_memories = await memory_manager.search(query_text, top_k=5)
+            logger.info(
+                f"[AURA→RAG] 传统召回 | query=\"{query_text[:40]}...\" | "
+                f"召回 {len(rag_memories)} 条"
+            )
 
         # 构建记忆区块
         if rag_memories:
+            # RAG 有数据 → 使用结构化召回结果
             memory_lines = ["[LONG_TERM_MEMORY]"]
-            memory_lines.append("（以下为与当前场景最相关的记忆，由 AURA RAG 系统召回）")
+            memory_lines.append("（以下为与当前场景最相关的长期记忆，由 AURA RAG 系统召回）")
             memory_lines.append("")
             for mem in rag_memories:
                 memory_lines.append("- %s" % mem)
@@ -403,12 +501,69 @@ async def chat_completion(
                 f"[AURA→记忆] 区块注入完成 | "
                 f"{len(rag_memories)}条 | 总字符: {sum(len(m) for m in rag_memories)}"
             )
+        elif sys_comp.get("long_term_memory"):
+            # RAG 无数据（FAISS 为空）→ 透传 TAVO 原始长记忆
+            tavo_memories = sys_comp["long_term_memory"]
+            memory_lines = ["[LONG_TERM_MEMORY]"]
+            memory_lines.append("（以下为 TAVO 原始长记忆，AURA RAG 系统尚未积累数据）")
+            memory_lines.append("")
+            for mem in tavo_memories:
+                memory_lines.append("- %s" % mem)
+            memory_lines.append("")
+            memory_lines.append("# 记忆应用")
+            memory_lines.append("- 像朋友般自然运用这些记忆，不要一次性提及所有记忆")
+            memory_lines.append("- 选择与当前场景最相关的记忆自然融入叙述")
+            memory_lines.append("- 避免机械式表达如\"根据我的记忆...\"")
+            memory_lines.append("- 共同经历时可温情回忆：\"上次我们讨论很有趣\"")
+            memory_lines.append("")
+            memory_lines.append("记忆是丰富对话的工具，而非对话焦点。")
+            blocks.append("\n".join(memory_lines))
+
+            logger.info(
+                f"[AURA→记忆] 透传 TAVO 原始长记忆 | "
+                f"{len(tavo_memories)}条 | 总字符: {sum(len(m) for m in tavo_memories)}"
+            )
+        else:
+            logger.debug("[AURA→记忆] 无长记忆数据，跳过 [LONG_TERM_MEMORY] 区块")
+
+        # ================================================================
+        # --- [USER_INTENT_TAG] 用户意图标签（v0.7.0）
+        #     由 IntentTagger 解析用户输入后生成，指导主 LLM 生成方向
+        #     仅当置信度 >= 0.6 时注入
+        #
+        # 设计原则：只注入自然语言段落，不注入结构化数据。
+        # 结构化数据（input_type, user_expectation, confidence）仅用于 RAG 匹配，
+        # 不传递给主 LLM，避免诱导 LLM 进行结构化输出或破坏 RP 沉浸感。
+        #
+        # 位置策略：不放入 System Prompt blocks，而是合并到 WORKING_MEMORY 中，
+        # 一起追加到最后一条 user 消息末尾，利用近因效应让 LLM 优先遵循。
+        #
+        # 分段策略：不再在 USER_INTENT_TAG 中写分段要求（DeepSeek 对指令不敏感），
+        # 改为在 OUTPUT_SPEC 中用 few-shot 示例约束输出格式（模仿 > 指令）。
+        # ================================================================
+        if intent_result and intent_result.should_use() and intent_result.implicit_instruction:
+            # 只注入 implicit_instruction（自然语言导演指令），
+            # 去掉 input_type / user_expectation / confidence 等结构化字段
+            # 分段要求已移至 OUTPUT_SPEC 的 few-shot 示例中，此处不再重复
+            intent_instruction = intent_result.implicit_instruction.rstrip()
+            if not intent_instruction.endswith("。"):
+                intent_instruction += "。"
+
+            # 合并到 WORKING_MEMORY 文本中
+            working_memory_text += "\n\n" + f"""[USER_INTENT_TAG]
+{intent_instruction}"""
+            logger.info(
+                f"[AURA→意图] [USER_INTENT_TAG] 已合并到 WORKING_MEMORY | "
+                f"指令: {intent_result.implicit_instruction[:80]}..."
+            )
 
         # --- 区块8: [WORLD_CONTEXT] 世界书（有则注入，无则跳过） ---
         if sys_comp["world_book"] and sys_comp["world_book"].strip():
             blocks.append(f"[WORLD_CONTEXT]\n{sys_comp['world_book'].strip()}")
 
         # --- 区块9: [OUTPUT_SPEC] 输出格式规范（静态模板）+ COT 自我校验 ---
+        # 注意：DeepSeek 对"指令"不敏感，但对"示例"非常敏感。
+        # 因此用 few-shot 示例替代"请分段"指令，让模型通过模仿来分段。
         output_spec_block = """[OUTPUT_SPEC]
 - 长度：400-600 字
 - 结构：环境描写(30%) + NPC内心/对话(40%) + 留给user的行动空间(30%)
@@ -418,13 +573,28 @@ async def chat_completion(
   （心理活动）（小括号 = 角色内心独白）
 - 禁止：替 user 做决定、推进剧情、OOC
 
+# 输出格式示例（必须严格模仿此格式）
+你的输出格式应如下例：
+
+阳光透过女子学校的铁艺大门，在地面投下斑驳的纹路。秋天的银杏叶被风卷起，在门口的喷泉边打转。
+
+几个正抱着课本路过的女生停下脚步，目光警惕地打量着门口这位不速之客。
+
+校门口的石狮静默矗立，等待着这位闯入者迈出第一步。
+
+注意：
+- 每段之间必须空一行
+- 每段是一个独立的画面
+- 段落长度应错落有致，不要每段等长
+
 # 输出前自我校验（COT）
 在生成最终回复前，请按以下步骤逐项检查：
 1. 这段回复中是否有替 user 生成行动或台词？→ 如果有，删除对应部分
 2. 这段回复是否推进了主线剧情？→ 如果是，改为环境描写或NPC反应
 3. 这段回复是否符合角色设定和当前场景？→ 如果否，重新调整
 4. 标记使用是否正确（台词用"", 动作用**, 心理用()）？→ 如果否，修正
-5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展"""
+5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展
+6. 回复格式是否与上述示例一致（每段空行分隔、每段一个独立画面）？→ 如果否，重新分段"""
         blocks.append(output_spec_block)
 
         optimized_system = "\n\n".join(blocks)
@@ -459,9 +629,14 @@ async def chat_completion(
             messages_list[0]["content"] = optimized_system
 
         # ================================================================
-        # 3d. 结尾限制：在每个 user 消息末尾追加约束（Recency Effect）
-        #     利用近因效应，LLM 对 prompt 末尾的内容记忆最清晰
-        #     与开头 [MAIN_PROMPT] 的约束形成"两头堵"效果
+        # 3d. 结尾限制：利用近因效应（Recency Effect）
+        #     将 WORKING_MEMORY + USER_INTENT_TAG 追加到最后一条 user 消息末尾
+        #     同时给所有 user 消息追加 [系统约束]
+        #
+        # 策略：
+        # - 所有 user 消息末尾追加 [系统约束]（简短约束）
+        # - 最后一条 user 消息额外追加 WORKING_MEMORY（含 USER_INTENT_TAG）
+        #   这样 LLM 在生成回复时，最近看到的就是当前语境+导演指令
         # ================================================================
         user_constraint = (
             "\n\n[系统约束] 请严格遵守以下规则：\n"
@@ -469,11 +644,27 @@ async def chat_completion(
             "2. 可以生成其他NPC的台词、行动和环境描写\n"
             "3. 替用户留出行动空间，不要推进剧情"
         )
-        for msg in messages_list:
+
+        # 找到最后一条 user 消息的索引
+        last_user_idx = -1
+        for i in range(len(messages_list) - 1, -1, -1):
+            if messages_list[i]["role"] == "user":
+                last_user_idx = i
+                break
+
+        for i, msg in enumerate(messages_list):
             if msg["role"] == "user":
                 # 避免重复追加（如果已经追加过则跳过）
                 if "[系统约束]" not in msg["content"]:
                     msg["content"] = msg["content"].rstrip() + user_constraint
+
+                # 最后一条 user 消息额外追加 WORKING_MEMORY（含 USER_INTENT_TAG）
+                if i == last_user_idx and working_memory_text:
+                    msg["content"] = msg["content"].rstrip() + "\n\n" + working_memory_text
+                    logger.info(
+                        f"[AURA→近因] WORKING_MEMORY 已追加到最后一条 user 消息末尾 | "
+                        f"长度: {len(working_memory_text)}字符"
+                    )
 
         logger.debug(
             f"[AURA→约束] 已对 {sum(1 for m in messages_list if m['role'] == 'user')} 条 user 消息追加结尾约束"
@@ -553,6 +744,37 @@ async def chat_completion(
 
     # [AURA→LLM] 记录转发到 LLM 的请求
     logger.info(f"[AURA→LLM] 转发请求 | 会话: {session_id} | URL: {url} | 后端: {backend} | 模型: {request.model}")
+
+    # [调试日志] 保存 AURA→LLM 的转发内容到独立文件（aura_output_YYYYMMDD_HHMMSS.txt）
+    try:
+        prompt_dump_dir = "prompt_dumps"
+        os.makedirs(prompt_dump_dir, exist_ok=True)
+        time_str = time.strftime("%Y%m%d_%H%M%S")
+        aura_output_file = os.path.join(prompt_dump_dir, f"aura_output_{time_str}.txt")
+        with open(aura_output_file, "w", encoding="utf-8") as f:
+            f.write(f"=== AURA→LLM 转发请求 ===\n")
+            f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"会话: {session_id}\n")
+            f.write(f"后端: {backend}\n")
+            f.write(f"模型: {request.model}\n")
+            f.write(f"流式: {request.stream}\n")
+            f.write(f"{'='*60}\n\n")
+            # 写入完整的 messages 列表
+            for i, msg in enumerate(forward_payload.get("messages", [])):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                f.write(f"--- 消息 {i} | role: {role} | 长度: {len(content)}字符 ---\n")
+                f.write(content)
+                f.write("\n\n")
+            # 写入其他参数
+            f.write(f"{'='*60}\n")
+            f.write(f"其他参数: temperature={forward_payload.get('temperature')}, ")
+            f.write(f"max_tokens={forward_payload.get('max_tokens', 'N/A')}, ")
+            f.write(f"stream={forward_payload.get('stream')}\n")
+        logger.info(f"[AURA→LLM] 调试日志已保存: {aura_output_file}")
+    except Exception as e:
+        logger.warning(f"[AURA→LLM] 保存转发内容失败: {e}")
+
     if settings.debug_mode:
         masked_key = api_key[:6] + "***" + api_key[-4:] if len(api_key) > 10 else "***"
         logger.debug(f"[AURA→LLM] API Key: {masked_key}")
@@ -562,11 +784,13 @@ async def chat_completion(
     if request.stream:
         return await _handle_streaming_request(
             url, headers, forward_payload, session_id, x_tavo_debug,
+            llm_config=llm_config,
             aura_session_id=aura_session_id, round_num=round_num
         )
     else:
         return await _handle_non_streaming_request(
             url, headers, forward_payload, session_id, x_tavo_debug, request.model,
+            llm_config=llm_config,
             aura_session_id=aura_session_id, round_num=round_num
         )
 
@@ -577,11 +801,13 @@ async def _handle_non_streaming_request(
     session_id: str,
     debug_flag: Optional[str],
     model_name: str,
+    llm_config: Optional[LLMConfig] = None,
     aura_session_id: str = "",
     round_num: int = 0
 ) -> ChatCompletionResponse:
     """处理非流式请求：发送普通 POST 请求，返回标准 JSON 响应"""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=60.0)) as client:
+    timeout = llm_config.timeout if llm_config else 60
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, read=timeout)) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
         except httpx.TimeoutException:
@@ -693,13 +919,34 @@ async def _handle_streaming_request(
     payload: Dict[str, Any],
     session_id: str,
     debug_flag: Optional[str],
+    llm_config: Optional[LLMConfig] = None,
     aura_session_id: str = "",
     round_num: int = 0
 ) -> StreamingResponse:
-    """处理流式请求：透传后端 SSE 数据流，并记录 LLM 响应数据"""
+    """
+    处理流式请求：先完整收集 LLM 的 SSE 流 → 质检（预留 LangGraph 节点）
+    → 再模拟 SSE 流式返回给 TAVO。
+
+    设计说明（参考 Day 3 架构决策）：
+    - 流式传输的"不可撤回"特性（已发送到 TAVO 的内容无法收回）
+    - 因此采用"先完整生成 → 质检 → 再流式返回"策略
+    - LLM 请求使用流式模式（AURA 内部聚合），质检通过后切割为 SSE chunk 模拟流式返回
+    - Day 3 LangGraph 集成时，质检节点（FormatGuard/OOCCheck/ContentFilter）
+      将在阶段1和阶段2之间介入
+    - 对于重度 RP 用户，10-30 秒的等待换取 Sonnet 级别的沉浸体验，是完全可接受的
+    """
     async def stream_generator():
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None)) as client:
-            try:
+        full_content_parts: List[str] = []
+        raw_chunks: List[bytes] = []
+        chunk_count = 0
+        has_content = False
+
+        try:
+            # ================================================================
+            # 阶段1: 完整收集 LLM 的 SSE 流（聚合所有 chunk）
+            # ================================================================
+            stream_timeout = llm_config.timeout if llm_config else 60
+            async with httpx.AsyncClient(timeout=httpx.Timeout(stream_timeout, read=None)) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
                     if response.status_code != 200:
                         error_body = await response.aread()
@@ -708,59 +955,158 @@ async def _handle_streaming_request(
                         yield f"data: {json.dumps({'error': f'后端错误 {response.status_code}: {error_text}'})}\n\n"
                         return
 
-                    # 记录流式响应开始
                     logger.info(f"[LLM→AURA] 流式响应开始 | 会话: {session_id} | 后端: {url}")
-                    
-                    # 用于聚合流式内容的缓冲区（调试用）
-                    stream_content_parts = []
-                    chunk_count = 0
 
-                    # 逐块透传并记录
                     async for chunk in response.aiter_bytes():
-                        if chunk:
-                            chunk_count += 1
-                            chunk_str = chunk.decode('utf-8', errors='replace')
-                            
-                            # 记录每个 SSE chunk（调试模式下记录内容预览）
-                            if settings.debug_mode:
-                                # 提取 data: 行中的内容预览
-                                for line in chunk_str.split('\n'):
-                                    if line.startswith('data: ') and line != 'data: [DONE]':
-                                        try:
-                                            data_json = json.loads(line[6:])
-                                            delta = data_json.get('choices', [{}])[0].get('delta', {})
-                                            content = delta.get('content', '')
-                                            if content:
-                                                stream_content_parts.append(content)
-                                        except (json.JSONDecodeError, IndexError, KeyError):
-                                            pass
-                            
-                            yield chunk
+                        if not chunk:
+                            continue
 
-                    # 流式响应结束，打印汇总信息
-                    full_content = ''.join(stream_content_parts)
-                    content_preview = full_content[:200] + '...' if len(full_content) > 200 else full_content
-                    logger.info(
-                        f"[LLM→AURA] 流式响应完成 | 会话: {session_id} | "
-                        f"chunk数: {chunk_count} | 内容长度: {len(full_content)}字符"
-                    )
-                    if settings.debug_mode and content_preview:
-                        logger.debug(f"[LLM→AURA] 流式响应内容预览: {content_preview}")
+                        chunk_count += 1
+                        raw_chunks.append(chunk)
+                        chunk_str = chunk.decode('utf-8', errors='replace')
 
-                    # 保存 LLM 回复到 SQLite（流式）
-                    if aura_session_id and round_num > 0 and full_content:
-                        try:
-                            await memory_manager.save_dialogue(aura_session_id, "assistant", full_content, round_num)
-                            logger.debug(f"[AURA→记忆] 保存 LLM 回复（流式）| 会话: {aura_session_id} | 轮次: {round_num} | 长度: {len(full_content)}字符")
-                        except Exception as e:
-                            logger.warning(f"[AURA→记忆] 保存 LLM 回复失败（流式，不影响返回）: {e}")
+                        # 提取 content 文本并收集（用于后续 SQLite 保存 + 质检）
+                        for line in chunk_str.split('\n'):
+                            if line.startswith('data: ') and line != 'data: [DONE]':
+                                try:
+                                    data_json = json.loads(line[6:])
+                                    delta = data_json.get('choices', [{}])[0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        full_content_parts.append(content)
+                                        has_content = True
+                                except (json.JSONDecodeError, IndexError, KeyError):
+                                    pass
 
-            except httpx.TimeoutException:
-                logger.error(f"流式请求超时 | 会话: {session_id}")
-                yield f"data: {json.dumps({'error': '请求超时'})}\n\n"
-            except Exception as e:
-                logger.exception(f"流式转发异常 | 会话: {session_id}")
-                yield f"data: {json.dumps({'error': f'内部错误: {str(e)}'})}\n\n"
+            # ================================================================
+            # 阶段1.5: 质检节点（预留 Day 3 LangGraph 介入点）
+            # ================================================================
+            full_content = ''.join(full_content_parts)
+            content_preview = full_content[:200] + '...' if len(full_content) > 200 else full_content
+            logger.info(
+                f"[LLM→AURA] 流式响应收集完成 | 会话: {session_id} | "
+                f"chunk数: {chunk_count} | 内容长度: {len(full_content)}字符"
+            )
+            if settings.debug_mode and content_preview:
+                logger.debug(f"[LLM→AURA] 流式响应内容预览: {content_preview}")
+
+            # [调试] 检查 LLM 返回内容是否包含段落分隔符
+            has_double_newline = '\\n\\n' in repr(full_content)
+            has_single_newline = '\\n' in repr(full_content)
+            logger.info(
+                f"[LLM→AURA] 内容格式检查 | 含双换行(段落): {has_double_newline} | "
+                f"含单换行: {has_single_newline} | "
+                f"repr前100: {repr(full_content[:150])}"
+            )
+
+            # 【预留】Day 3 LangGraph 质检节点介入点：
+            #   - FormatGuard: 越权输出检测 + 关系一致性检测
+            #   - OOCCheck: 人设一致性校验
+            #   - ContentFilter: 文风污染过滤
+            #   - 质检不通过 → 触发 retry → ModelDialectCompiler 调整策略 → 重新生成
+            #   - 质检通过 → 继续阶段2
+
+            # 保存 LLM 回复到 SQLite（在质检后、返回前保存）
+            if aura_session_id and round_num > 0 and has_content:
+                try:
+                    await memory_manager.save_dialogue(aura_session_id, "assistant", full_content, round_num)
+                    logger.debug(f"[AURA→记忆] 保存 LLM 回复（流式）| 会话: {aura_session_id} | 轮次: {round_num} | 长度: {len(full_content)}字符")
+                except Exception as e:
+                    logger.warning(f"[AURA→记忆] 保存 LLM 回复失败（不影响返回）: {e}")
+
+            # ================================================================
+            # 阶段2: 模拟 SSE 流式返回给 TAVO
+            # ================================================================
+            if not has_content:
+                # 没有内容时直接返回 [DONE]
+                yield b"data: [DONE]\n\n"
+                logger.info(f"[AURA→TAVO] 流式返回完成（无内容）| 会话: {session_id}")
+                return
+
+            # 将完整内容按段落+句子粒度切分，模拟流式效果
+            # 注意：必须保留段落之间的空行（\n\n），否则 TAVO 端渲染时会丢失分段
+            import re
+
+            # 第一步：按双换行（段落边界）切分，保留段落结构
+            paragraphs = full_content.split('\n\n')
+            
+            # 第二步：对每个段落，再按句子边界切分（用于流式效果）
+            sentence_delimiters = re.compile(
+                r'(?<=[。！？.!?])(?:\s*(?=[\u4e00-\u9fff"「「*]))'
+                r'|(?<=[。！？.!?])'
+            )
+            
+            segments = []
+            for i, para in enumerate(paragraphs):
+                if not para.strip():
+                    # 空行段落 → 跳过（段落分隔由前一段落末尾的 \n 处理）
+                    continue
+                
+                # 对段落内按句子切分
+                raw_sentences = sentence_delimiters.split(para)
+                para_sentences = [s.strip() for s in raw_sentences if s.strip()]
+                
+                if not para_sentences:
+                    # 如果段落内没有可切分的句子，整个段落作为一个 segment
+                    para_text = para.strip()
+                else:
+                    para_text = ''.join(para_sentences)
+                
+                # 段落末尾追加 \n\n，保留段落间距
+                # 最后一段不加（避免末尾多余空行）
+                if i < len(paragraphs) - 1:
+                    para_text += '\n\n'
+                
+                segments.append(para_text)
+            
+            if not segments:
+                # 如果没有成功切分，按固定长度切分
+                segments = [full_content[i:i+20] for i in range(0, len(full_content), 20)]
+            
+            seg_count = len(segments)
+            logger.info(
+                f"[AURA→TAVO] 模拟流式返回 | 会话: {session_id} | "
+                f"总字符: {len(full_content)} | 切分段数: {seg_count}"
+            )
+
+            # 逐段 yield，每段之间加短暂延迟模拟流式效果
+            for i, segment in enumerate(segments):
+                if not segment:
+                    continue
+                
+                # 构建 SSE data 行
+                sse_data = {
+                    "id": f"aura-{session_id}-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": payload.get("model", "unknown"),
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": segment},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                
+                # 每段之间延迟 30-80ms，模拟真实流式节奏
+                # 句子越长延迟越大，让 TAVO 端感知到自然的流式效果
+                delay = min(0.08, max(0.03, len(segment) * 0.003))
+                await asyncio.sleep(delay)
+
+            # 发送结束标记
+            yield b"data: [DONE]\n\n"
+
+            logger.info(
+                f"[AURA→TAVO] 流式返回完成 | 会话: {session_id} | "
+                f"总字符: {len(full_content)} | 切分段数: {seg_count}"
+            )
+
+        except httpx.TimeoutException:
+            logger.error(f"流式请求超时 | 会话: {session_id}")
+            yield f"data: {json.dumps({'error': '请求超时'})}\n\n".encode('utf-8')
+        except Exception as e:
+            logger.exception(f"流式处理异常 | 会话: {session_id}")
+            yield f"data: {json.dumps({'error': f'内部错误: {str(e)}'})}\n\n".encode('utf-8')
 
     # 可选：在响应头中加入调试标识
     extra_headers = {}
@@ -781,7 +1127,7 @@ async def health_check():
     """健康检查"""
     return {
         "status": "healthy",
-        "service": "AURA-Simple",
+        "service": "AURA",
         "version": "0.6.0",
         "mode": "block-reassembly",
         "debug": settings.debug_mode
@@ -791,23 +1137,23 @@ async def health_check():
 async def initialize_aura():
     """初始化AURA系统"""
     try:
-        logger.info("AURA 简化版本初始化完成")
-        logger.info(f"服务模式: 区块化重组 + RAG 记忆召回 (v0.6.0)")
+        logger.info("AURA 初始化完成")
+        logger.info(f"服务模式: 区块化重组 + 3层记忆 + 意图感知 (v0.7.0)")
         logger.info(f"调试模式: {'启用' if settings.debug_mode else '禁用'}")
-        
+
         # 验证LLM配置
         config_status = validate_llm_config()
         active_backends = [name for name, status in config_status.items() if status]
         logger.info(f"激活的LLM后端: {active_backends}")
-        
+
         if not active_backends:
             logger.warning("没有配置有效的LLM后端，请检查环境变量")
-        
+
         # 初始化记忆管理器（v0.6.0）
         await memory_manager.initialize()
         mem_count = await memory_manager.get_memory_count()
         logger.info(f"[AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: {mem_count}")
-        
+
     except Exception as e:
         logger.exception("AURA初始化失败")
         raise

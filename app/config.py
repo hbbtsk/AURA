@@ -1,11 +1,23 @@
 """
 AURA配置管理
 管理LLM API连接和多后端配置
+
+设计原则：
+- 所有 LLM API 调用的配置集中在此处管理
+- 每个使用场景有独立的 LLMConfig 实例，避免互相影响
+- 调用方统一使用 get_llm_config(scene) 获取配置，不再硬编码任何参数
 """
 import os
+import logging
 from typing import Dict, Optional
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("aura.config")
+
+
+# 项目根目录（config.py 所在目录的父目录）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class LLMConfig(BaseSettings):
@@ -15,92 +27,133 @@ class LLMConfig(BaseSettings):
     model: str
     max_tokens: Optional[int] = 2048
     temperature: float = 0.7
-    timeout: int = 30
+    timeout: int = 30  # httpx 超时秒数（连接+读取）
 
 
 class Settings(BaseSettings):
-    """AURA全局配置"""
-    
-    # 数据库配置
-    database_url: str = "sqlite+aiosqlite:///./aura.db"
-    
-    # LLM后端配置
-    default_llm: str = "deepseek"
-    
-    # DeepSeek配置（生成主模型）
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_api_key: str = Field(default="", env="DEEPSEEK_API_KEY")
-    deepseek_model: str = "deepseek-v4-flash"
-    # deepseek_model: str = "deepseek-v4-pro"
-    
-    # Kimi配置（记忆总结/便宜模型）
-    kimi_base_url: str = "https://api.moonshot.cn/v1"
-    kimi_api_key: str = Field(default="", env="KIMI_API_KEY")
-    kimi_model: str = "kimi-k2.6"
-    
-    # Gemini配置（暂时禁用）
-    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    gemini_api_key: str = Field(default="", env="GEMINI_API_KEY")
-    gemini_model: str = "gemini-1.5-flash"
-    
-    # 记忆管理配置
-    memory_summary_interval: int = 5  # 每 N 轮对话总结一次记忆
-    rag_time_gamma: float = 1.5        # RAG 时间权重幂次（越大越强调新记忆）
-    rag_semantic_weight: float = 0.6   # RAG 语义分权重（余下为时间权重）
-    structured_memory_enabled: bool = False  # 是否启用结构化记忆存储（叙事增强）
-    
-    # 调试配置
+    """应用配置"""
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(_PROJECT_ROOT, ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # ========== 调试 ==========
     debug_mode: bool = True
-    log_requests: bool = True
-    log_responses: bool = True
-    
-    # Tavo拦截配置
-    enable_interception: bool = True
-    debug_header: str = "X-Tavo-Debug"
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+
+    # ========== 默认LLM ==========
+    default_llm: str = "deepseek"
+
+    # ========== DeepSeek ==========
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-v4-flash"
+
+    # ========== Kimi ==========
+    kimi_base_url: str = "https://api.moonshot.cn/v1"
+    kimi_api_key: str = ""
+    kimi_model: str = "kimi-k2.6"
+
+    # ========== Gemini ==========
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+
+    # ========== 场景参数：主对话（main） ==========
+    llm_main_temperature: float = 0.7
+    llm_main_max_tokens: int = 4096
+    llm_main_timeout: int = 60
+
+    # ========== 场景参数：记忆总结（summary） ==========
+    llm_summary_temperature: float = 0.3
+    llm_summary_max_tokens: int = 2048
+    llm_summary_timeout: int = 30
+
+    # ========== 场景参数：意图分析（intent） ==========
+    llm_intent_temperature: float = 1.0  # Kimi k2.6 只允许 temperature=1
+    llm_intent_max_tokens: int = 2048  # Kimi k2.6 有 reasoning_content，需要更多 token
+    llm_intent_timeout: int = 60  # Kimi k2.6 reasoning 较慢
+
+    # ========== 记忆总结 ==========
+    memory_summary_interval: int = 5  # 每 N 轮对话触发一次记忆总结
 
 
-# 全局配置实例
+# 全局单例
 settings = Settings()
 
-def get_llm_config(provider: str = None) -> LLMConfig:
-    """获取指定LLM后端的配置"""
+
+def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMConfig]:
+    """
+    获取指定LLM后端 + 指定场景的配置
+    
+    Args:
+        provider: LLM 后端名称（deepseek/kimi/gemini），None 则用 default_llm
+        scene: 使用场景（main/summary/intent），不同场景有不同的 temperature/max_tokens/timeout
+    
+    Returns:
+        LLMConfig 实例，如果配置不完整则返回 None
+    """
     provider = provider or settings.default_llm
     
+    # 根据场景选择参数
+    if scene == "main":
+        temperature = settings.llm_main_temperature
+        max_tokens = settings.llm_main_max_tokens
+        timeout = settings.llm_main_timeout
+    elif scene == "summary":
+        temperature = settings.llm_summary_temperature
+        max_tokens = settings.llm_summary_max_tokens
+        timeout = settings.llm_summary_timeout
+    elif scene == "intent":
+        temperature = settings.llm_intent_temperature
+        max_tokens = settings.llm_intent_max_tokens
+        timeout = settings.llm_intent_timeout
+    else:
+        # 未知场景用安全默认值
+        temperature = 0.7
+        max_tokens = 2048
+        timeout = 30
+    
     if provider == "deepseek":
+        if not settings.deepseek_api_key:
+            logger.warning("[Config] DeepSeek API密钥未配置，返回 None")
+            return None
         return LLMConfig(
             base_url=settings.deepseek_base_url,
             api_key=settings.deepseek_api_key,
             model=settings.deepseek_model,
-            max_tokens=2048,
-            temperature=0.7
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
         )
     elif provider == "gemini":
-        # 检查Gemini配置是否完整
         if not settings.gemini_api_key:
-            raise ValueError(f"Gemini API密钥未配置")
+            logger.warning("[Config] Gemini API密钥未配置，返回 None")
+            return None
         return LLMConfig(
             base_url=settings.gemini_base_url,
             api_key=settings.gemini_api_key,
             model=settings.gemini_model,
-            max_tokens=2048,
-            temperature=0.7
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
         )
     elif provider == "kimi":
         if not settings.kimi_api_key:
-            raise ValueError(f"Kimi API密钥未配置")
+            logger.warning("[Config] Kimi API密钥未配置，返回 None")
+            return None
         return LLMConfig(
             base_url=settings.kimi_base_url,
             api_key=settings.kimi_api_key,
             model=settings.kimi_model,
-            max_tokens=4096,
-            temperature=0.3  # 总结用低温度，更稳定
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
         )
     else:
-        raise ValueError(f"不支持的LLM后端: {provider}")
+        logger.warning(f"[Config] 不支持的LLM后端: {provider}，返回 None")
+        return None
+
 
 def validate_llm_config() -> Dict[str, bool]:
     """验证各LLM后端配置是否完整"""
@@ -116,17 +169,3 @@ def validate_llm_config() -> Dict[str, bool]:
     results["gemini"] = False  # bool(settings.gemini_api_key)
     
     return results
-
-# 环境变量模板
-ENV_TEMPLATE = """
-# AURA配置
-AURA_DEBUG=true
-
-# LLM API密钥
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-KIMI_API_KEY=your_kimi_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# 数据库配置（可选）
-# DATABASE_URL=sqlite+aiosqlite:///./aura.db
-"""
