@@ -68,9 +68,6 @@ class PromptDecomposer:
     # 角色卡（英文）：以英文角色描述开头（如 "Weiss Schnee is..."）
     CHARACTER_CARD_PATTERN = r"^[A-Z][a-z]+ [A-Z][a-z]+ is .+"
 
-    # 世界书：以 "HISTORIA:" 开头（西班牙文）
-    WORLD_BOOK_START = "HISTORIA:"
-
     # 角色卡（XML 标签格式）：<charname>...</charname>
     XML_CHAR_CARD_PATTERN = r"<[a-z]+>.*?</[a-z]+>"
 
@@ -213,6 +210,25 @@ class PromptDecomposer:
                 if ban_text:
                     result["authority_ban"] = ban_text
 
+            # 世界书 — 在 =====角色卡结束===== 之后、[Start a new Chat] / XML 之前
+            if sections["marker_card_end"] is not None:
+                wb_start = sections["marker_card_end"] + 1
+                wb_end = len(lines)
+                if sections["xml_start"] is not None and sections["xml_start"] > wb_start:
+                    wb_end = sections["xml_start"]
+                elif sections["end_marker_start"] is not None and sections["end_marker_start"] > wb_start:
+                    wb_end = sections["end_marker_start"]
+
+                if wb_end > wb_start:
+                    wb_lines = lines[wb_start:wb_end]
+                    wb_text = "\n".join(wb_lines).strip()
+                    if wb_text and not wb_text.startswith("=====") and not wb_text.startswith("<"):
+                        result["world_book"] = wb_text
+                        logger.info(
+                            f"[AURA→标记] 使用标记路径提取世界书: "
+                            f"行 {wb_start+1}-{wb_end} | {len(result['world_book'])}字符"
+                        )
+
         else:
             # ============================================================
             # 无标记 → 回退到 HTML 注释标记 + 格式硬拆解
@@ -262,13 +278,15 @@ class PromptDecomposer:
                     f"行 {sections['char_card_marker_start']+1}-{sections['char_card_marker_end']-1} | "
                     f"{len(result['character_card'])}字符"
                 )
-            elif sections["char_card_start"] is not None and sections["world_book_start"] is not None:
-                result["character_card"] = "\n".join(
-                    lines[sections["char_card_start"]:sections["world_book_start"]]
-                ).strip()
             elif sections["char_card_start"] is not None:
+                # 角色卡终点：xml_start → end_marker_start → 文末
+                cc_end = len(lines)
+                if sections["xml_start"] is not None:
+                    cc_end = sections["xml_start"]
+                elif sections["end_marker_start"] is not None:
+                    cc_end = sections["end_marker_start"]
                 result["character_card"] = "\n".join(
-                    lines[sections["char_card_start"]:]
+                    lines[sections["char_card_start"]:cc_end]
                 ).strip()
 
             # ============================================================
@@ -281,27 +299,29 @@ class PromptDecomposer:
                 if sections["user_profile_start"] is not None:
                     if sections["char_card_start"] is not None:
                         profile_end = sections["char_card_start"]
-                    elif sections["world_book_start"] is not None:
-                        profile_end = sections["world_book_start"]
                     elif sections["xml_start"] is not None:
                         profile_end = sections["xml_start"]
+                    elif sections["end_marker_start"] is not None:
+                        profile_end = sections["end_marker_start"]
                     else:
                         profile_end = len(lines)
                 elif sections["memory_usage_start"] is not None:
                     if sections["char_card_start"] is not None:
                         profile_end = sections["char_card_start"]
-                    elif sections["world_book_start"] is not None:
-                        profile_end = sections["world_book_start"]
+                    elif sections["xml_start"] is not None:
+                        profile_end = sections["xml_start"]
+                    elif sections["end_marker_start"] is not None:
+                        profile_end = sections["end_marker_start"]
                     else:
                         profile_end = len(lines)
 
                 if profile_end is not None and profile_end < len(lines):
                     # 从 user_profile 结束行开始，到下一个已知区域结束
                     card_end = len(lines)
-                    if sections["world_book_start"] is not None and sections["world_book_start"] > profile_end:
-                        card_end = sections["world_book_start"]
-                    elif sections["xml_start"] is not None and sections["xml_start"] > profile_end:
+                    if sections["xml_start"] is not None and sections["xml_start"] > profile_end:
                         card_end = sections["xml_start"]
+                    elif sections["end_marker_start"] is not None and sections["end_marker_start"] > profile_end:
+                        card_end = sections["end_marker_start"]
 
                     candidate_lines = lines[profile_end:card_end]
                     candidate_text = "\n".join(candidate_lines).strip()
@@ -319,16 +339,6 @@ class PromptDecomposer:
                                 f"行 {profile_end+1}-{card_end} | "
                                 f"{len(result['character_card'])}字符"
                             )
-
-            # 世界书
-            if sections["world_book_start"] is not None and sections["xml_start"] is not None:
-                result["world_book"] = "\n".join(
-                    lines[sections["world_book_start"]:sections["xml_start"]]
-                ).strip()
-            elif sections["world_book_start"] is not None:
-                result["world_book"] = "\n".join(
-                    lines[sections["world_book_start"]:]
-                ).strip()
 
             # XML 角色卡
             if sections["xml_start"] is not None:
@@ -354,8 +364,8 @@ class PromptDecomposer:
             "char_card_start": None,          # 旧格式：英文角色描述开头
             "char_card_marker_start": None,   # HTML 注释标记开始行
             "char_card_marker_end": None,     # HTML 注释标记结束行
-            "world_book_start": None,
             "xml_start": None,
+            "end_marker_start": None,         # [Start a new Chat] 位置
             # ===== 格式标记（标记优先）
             "marker_memory_start": None,
             "marker_memory_end": None,
@@ -421,13 +431,11 @@ class PromptDecomposer:
 
             # 角色卡（英文格式回退）：以 "XXX is" 格式
             if re.match(r"^[A-Z][a-z]+ [A-Z][a-z]+ is ", stripped) and sections["char_card_start"] is None:
-                # 确保不是在世界书区域
-                if sections["world_book_start"] is None:
-                    sections["char_card_start"] = i
+                sections["char_card_start"] = i
 
-            # 世界书
-            if stripped.startswith(self.WORLD_BOOK_START) and sections["world_book_start"] is None:
-                sections["world_book_start"] = i
+            # [Start a new Chat] 结束标记
+            if stripped == self.END_MARKER and sections["end_marker_start"] is None:
+                sections["end_marker_start"] = i
 
             # XML 角色卡
             if stripped.startswith("<") and stripped.endswith(">") and sections["xml_start"] is None:

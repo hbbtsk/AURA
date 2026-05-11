@@ -1,19 +1,19 @@
 """
-AURA completions API — 核心转发 + Prompt 区块重组 + RAG 记忆召回
+AURA completions API — LangGraph 编排入口 + 流式返回工具
 
-工作流程：
+v0.8.0 架构：
   1. 接收 TAVO 请求 → 保存 Prompt dump 到本地
-  2. PromptDecomposer 拆解 System Prompt → 9 区块重组
-  3. RAG 语义召回（FAISS）替代全量长记忆注入
-  4. 两头约束：开头 [MAIN_PROMPT] + 结尾 user 消息追加约束
-  5. 保存对话到 SQLite，每 5 轮触发 Kimi 记忆总结
-  6. 转发给 LLM 后端（流式/非流式）
+  2. 组装 AgentState → 调用 aura_workflow.ainvoke()
+  3. LangGraph 15 节点状态机执行：
+     InputReceive → EntityExtract → EmotionAnalyze → MemoryDecision →
+     MemoryRetrieve → StateManager → StyleInjection → ModelDialectCompiler →
+     ContextAssemble → LLMGenerate → FormatGuard → OOCCheck → ContentFilter →
+     OutputReturn → MemoryExtract
+  4. 质检失败后自动重试（条件边回退到 ModelDialectCompiler）
+  5. 从最终状态构建响应（非流式/流式统一处理）
 
-v0.6.0 特性：
-  - AURA 自建记忆数据库（SQLite + FAISS）
-  - RAG 语义召回替代全量长记忆注入
-  - Kimi 每 5 轮自动总结记忆
-  - 两头约束（Priming + Recency Effect）
+保留函数：
+  - _build_streaming_response()：将完整内容切割为 SSE chunk 模拟流式返回
 """
 import os
 import re
@@ -33,6 +33,7 @@ from app.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
 from app.intent_tagger import intent_tagger
 from app.memory.models import IntentStructure, IntentResult
+from app.graph.workflow import aura_workflow
 
 # 确保日志目录存在
 LOG_DIR = "logs"
@@ -159,18 +160,27 @@ async def chat_completion(
     x_tavo_debug: Optional[str] = Header(None, alias="X-Tavo-Debug")
 ):
     """
-    AURA 核心 API — 接收 Tavo 请求，经 Prompt 区块重组 + RAG 记忆召回后转发给 LLM 后端
-    1. 接收 Tavo 请求（支持流式）
-    2. Prompt 拆解 + 9 区块重组 + RAG 语义召回
-    3. 转发给配置的 LLM 后端
-    4. 非流式：返回标准 JSON；流式：透传 SSE 流
+    AURA 核心 API — LangGraph 编排入口 (v0.8.0)
+
+    原顺序执行逻辑（Prompt 拆解 → RAG → LLM 调用）已迁移到
+    app/graph/workflow.py 的 15 节点状态机中。
+
+    当前入口职责：
+    1. 请求验证 + 日志 dump（保留）
+    2. 组装 AgentState
+    3. 调用 aura_workflow.ainvoke() 执行状态图
+    4. 从最终状态构建响应（非流式/流式统一处理）
     """
     session_id = f"aura_{int(time.time())}_{id(request)}"
-    
+
     # [TAVO→AURA] 记录收到的 TAVO 请求
-    logger.info(f"[TAVO→AURA] 收到请求 | 会话: {session_id} | 模型: {request.model} | 流式: {request.stream} | 消息数: {len(request.messages)}")
-    
-    # 保存 TAVO 请求到日志文件（兼容旧版日志格式）
+    logger.info(
+        f"[TAVO→AURA] 收到请求 | 会话: {session_id} | "
+        f"模型: {request.model} | 流式: {request.stream} | "
+        f"消息数: {len(request.messages)}"
+    )
+
+    # 保存 TAVO 请求到日志文件
     tavo_log_entry = {
         "session_id": session_id,
         "model": request.model,
@@ -178,7 +188,7 @@ async def chat_completion(
         "message_count": len(request.messages),
         "messages_preview": [
             {"role": m.role, "content_preview": m.content[:100] + "..." if len(m.content) > 100 else m.content}
-            for m in request.messages[:3]  # 只记录前3条消息的预览
+            for m in request.messages[:3]
         ],
         "temperature": request.temperature,
         "timestamp": int(time.time())
@@ -192,12 +202,11 @@ async def chat_completion(
         raise HTTPException(status_code=400, detail="model 字段不能为空")
 
     # ============================================================
-    # 1.5 保存完整 Prompt 到本地文件（用于调试和分析世界书格式）
+    # 1.5 保存完整 Prompt 到本地文件
     # ============================================================
     try:
         prompt_dump_dir = "prompt_dumps"
         os.makedirs(prompt_dump_dir, exist_ok=True)
-        # 使用可读的系统时间作为文件名
         time_str = time.strftime("%Y%m%d_%H%M%S")
         dump_file = os.path.join(prompt_dump_dir, f"prompt_{time_str}.txt")
         with open(dump_file, "w", encoding="utf-8") as f:
@@ -211,11 +220,9 @@ async def chat_completion(
                 f.write(f"--- 消息 {i} | role: {msg.role} | 长度: {len(msg.content)}字符 ---\n")
                 f.write(msg.content)
                 f.write("\n\n")
-        # 统计文件大小
         file_size = os.path.getsize(dump_file)
         logger.info(f"[TAVO→AURA] Prompt 已保存到: {dump_file} ({file_size}字节)")
 
-        # [调试日志] 同时保存 TAVO 原始请求到独立文件（tavo_input_YYYYMMDD_HHMMSS.txt）
         tavo_input_file = os.path.join(prompt_dump_dir, f"tavo_input_{time_str}.txt")
         with open(tavo_input_file, "w", encoding="utf-8") as f:
             f.write(f"=== TAVO 原始请求 ===\n")
@@ -241,558 +248,227 @@ async def chat_completion(
         raise HTTPException(status_code=503, detail=f"后端 {backend} 未正确配置")
 
     # ============================================================
-    # 3. Prompt 拆解 + 区块化重组（核心优化环节）
+    # 3. 组装 AgentState 并调用 LangGraph 状态机
     # ============================================================
-    try:
-        # 3a. 拆解原始请求
-        decomposed = decomposer.decompose({
+    import time as _time
+
+    # 提取最后一条 user 消息内容
+    user_content = ""
+    for msg in reversed(request.messages):
+        if msg.role == "user":
+            user_content = msg.content
+            break
+
+    # 获取 AURA 会话 ID
+    aura_session_id = _session_map.get(session_id, session_id)
+    _session_map[session_id] = aura_session_id
+
+    initial_state = {
+        "request": {
             "model": request.model,
             "messages": [msg.model_dump() for msg in request.messages],
             "temperature": request.temperature,
-            "stream": request.stream,
+            "stream": False,  # LangGraph 内部总为非流式（先完整生成 → 再流式返回）
             "max_tokens": request.max_tokens,
-        })
-
-        # 记录拆解统计
-        sys_comp = decomposed["system_prompt"]
-        logger.info(
-            f"[AURA→拆解] System Prompt 组件: "
-            f"越权禁令={len(sys_comp['authority_ban'])}字符, "
-            f"长记忆={len(sys_comp['long_term_memory'])}条, "
-            f"角色卡={len(sys_comp['character_card'])}字符, "
-            f"世界书={len(sys_comp['world_book'])}字符, "
-            f"XML角色卡={len(sys_comp['xml_character_cards'])}张, "
-            f"对话={decomposed['dialogue']['total_rounds']}轮"
-        )
-
-        # 3b. 检测用户是否写了自定义提示词
-        has_user_prefix = sys_comp.get("has_user_prefix", True)
-
-        # 从对话中提取用户名（最准确的方式）
-        # TAVO 格式：user 消息内容为 "用户名: 对话内容"
-        user_name = ""
-        raw_messages = decomposed.get("dialogue", {}).get("raw_messages", [])
-        for msg in raw_messages:
-            if msg.get("role") == "user":
-                content = msg.get("content", "")
-                colon_pos = content.find("：")
-                if colon_pos == -1:
-                    colon_pos = content.find(":")
-                if colon_pos > 0 and colon_pos < 50:  # 用户名通常在开头50字符内
-                    user_name = content[:colon_pos].strip()
-                break
-        # 后备：从 user_profile 正则提取
-        if not user_name and sys_comp["user_profile"]:
-            profile_match = re.match(r"^(.+?)是\1", sys_comp["user_profile"])
-            if profile_match:
-                user_name = profile_match.group(1)
-
-        # 提取时间线状态
-        timeline_state = ""
-        if sys_comp["authority_ban"]:
-            ban_lines = sys_comp["authority_ban"].split("\n")
-            for bl in ban_lines:
-                if "当前时间线" in bl:
-                    timeline_state = bl.strip()
-                    break
-
-        # ============================================================
-        # 3c. 构建最终的 System Prompt — 统一区块化重组
-        #
-        # 无论用户是否写了自定义提示词，都走区块组装流程：
-        # - has_user_prefix == True  → 保留为 [MAIN_PROMPT] 区块，再组装其他区块
-        # - has_user_prefix == False → 直接组装 8 个标准区块
-        #
-        # v0.6.0 新增：RAG 语义召回替代全量长记忆注入
-        # v0.7.0 新增：3 层记忆（WORKING + RECENT + LONG_TERM）+ IntentTagger
-        #
-        # 区块位置策略（v0.7.1）：
-        # - System Prompt 区块（blocks）：MAIN_PROMPT / PROTOCOL / CONSTRAINTS /
-        #   CHARACTER_CARD / USER_PROFILE / CURRENT_STATE / RECENT_MEMORY /
-        #   LONG_TERM_MEMORY / WORLD_CONTEXT / OUTPUT_SPEC
-        # - 近因区块（追加到最后一条 user 消息）：WORKING_MEMORY + USER_INTENT_TAG
-        #   利用近因效应，让 LLM 在生成回复时最近看到的就是当前语境+导演指令
-        # ============================================================
-        messages_list = [msg.model_dump() for msg in request.messages]
-        original_system = decomposed["raw"]["system_content"]
-        blocks = []
-
-        # --- 区块0（条件）：[MAIN_PROMPT] 用户自定义提示词（仅保留第一行） ---
-        # 只取第一个 ===== 标记之前的内容（用户写的 MAIN PROMPT 头部）
-        # 后面的 =====长记忆===== / =====角色卡===== 等由各专用区块负责
-        if has_user_prefix:
-            main_prompt_lines = original_system.split("\n")
-            main_prompt_head = []
-            for line in main_prompt_lines:
-                if line.startswith("====="):
-                    break
-                main_prompt_head.append(line)
-            main_prompt_text = "\n".join(main_prompt_head).strip()
-            if main_prompt_text:
-                # 在 MAIN_PROMPT 末尾追加"开头限制"——设定角色边界（Priming Effect）
-                main_prompt_text += """
-
-# 核心约束（必须遵守）
-- 禁止生成用户的台词和行动
-- 可以生成其他NPC的台词、行动和环境描写
-- 替用户留出行动空间，不要推进剧情"""
-                blocks.append(f"[MAIN_PROMPT]\n{main_prompt_text}")
-
-        # --- 区块1: [PROTOCOL] 通信标记约定（静态模板） ---
-        protocol_block = """[PROTOCOL]
-- "对话内容"（双引号）= 角色台词，表示角色说出口的话
-- **动作描写**（星号）= 角色动作、表情、行为
-- （心理活动）（小括号）= 角色内心独白，未说出口的想法
-- 输入格式：user 的消息会使用上述标记，LLM 需正确理解
-- 输出格式：LLM 的回复也必须使用上述标记，保持格式一致"""
-        blocks.append(protocol_block)
-
-        # --- 区块2: [CONSTRAINTS] 角色边界 + 负向指令（静态模板） ---
-        constraints_block = f"""[CONSTRAINTS]
-- LLM 角色声明：你是旁白/NPC扮演者，禁止替 {user_name or '用户'} 生成任何行动或台词
-- 负向指令：禁止生成臀腿腰胸等垃圾小说描写；禁止推进剧情
-- 输出格式：环境描写 + NPC 反应 + {user_name or '用户'} 行动空间"""
-        blocks.append(constraints_block)
-
-        # --- 区块3: [CHARACTER_CARD] 角色卡（拆解自 TAVO，完整保留） ---
-        if sys_comp["character_card"]:
-            blocks.append(f"[CHARACTER_CARD]\n{sys_comp['character_card']}")
-
-        # --- 区块4: [USER_PROFILE] 用户设定（拆解自 TAVO，完整保留） ---
-        if sys_comp["user_profile"]:
-            blocks.append(f"[USER_PROFILE]\n{sys_comp['user_profile']}")
-
-        # --- 区块5: [CURRENT_STATE] 实体当前状态（Mock，待 Day 4 实现） ---
-        current_state_block = """[CURRENT_STATE]
-- [state: 当前场景: 待初始化]
-- [state: 时间线: 待初始化]
-- （此区块将在 Day 4 由 StateManager 从数据库读取真实状态后生成）"""
-        blocks.append(current_state_block)
-
-        # ================================================================
-        # 3c-1. IntentTagger：解析用户输入意图（v0.7.0）
-        # ================================================================
-        dialogue = decomposed.get("dialogue", {})
-        recent_rounds = dialogue.get("recent_rounds", [])
-        last_input = dialogue.get("last_user_input", "")
-
-        intent_result = None
-        if last_input:
-            try:
-                # 构建上下文信息
-                context = {
-                    "scene_type": "未知",
-                    "active_entities": [],
-                }
-                # 尝试从角色卡中提取活跃角色
-                if sys_comp.get("character_card"):
-                    # 简单提取：取角色卡第一行作为当前角色
-                    first_line = sys_comp["character_card"].split("\n")[0].strip()
-                    if first_line:
-                        context["active_entities"] = [first_line]
-
-                intent_result = await intent_tagger.analyze(last_input, context=context)
-                if intent_result and intent_result.should_use():
-                    logger.info(
-                        f"[AURA→意图] 意图解析成功 | "
-                        f"type={intent_result.input_type}, "
-                        f"confidence={intent_result.confidence:.2f}"
-                    )
-                else:
-                    logger.debug(
-                        f"[AURA→意图] 意图解析置信度不足或为空 "
-                        f"(confidence={intent_result.confidence if intent_result else 0}), 跳过意图修正"
-                    )
-                    intent_result = None
-            except Exception as e:
-                logger.warning(f"[AURA→意图] 意图解析失败（不影响主流程）: {e}")
-                intent_result = None
-
-        # ================================================================
-        # 3c-2. 3 层记忆注入（v0.7.0）
-        # ================================================================
-
-        # --- 区块6a: [WORKING_MEMORY] 工作记忆 — 最近 5 轮对话 ---
-        # 注意：WORKING_MEMORY 不加入 blocks（System Prompt），
-        # 而是在 3d 阶段合并到最后一条 user 消息末尾，利用近因效应
-        working_memory_lines = ["[WORKING_MEMORY]"]
-        working_memory_lines.append("（以下为最近 5 轮对话，反映当前即时语境）")
-        working_memory_lines.append("")
-        if recent_rounds:
-            for i, round_data in enumerate(recent_rounds):
-                user_msg = round_data.get("user", "")
-                assistant_msg = round_data.get("assistant", "")
-                if user_msg:
-                    working_memory_lines.append("  [%d] %s: %s%s" % (i+1, user_name or "用户", user_msg[:200], "..." if len(user_msg) > 200 else ""))
-                if assistant_msg:
-                    working_memory_lines.append("  [%d] NPC: %s%s" % (i+1, assistant_msg[:200], "..." if len(assistant_msg) > 200 else ""))
-        else:
-            working_memory_lines.append("  （无最近对话记录）")
-
-        if last_input:
-            working_memory_lines.append("  [当前输入] %s: %s%s" % (user_name or "用户", last_input[:200], "..." if len(last_input) > 200 else ""))
-
-        # 暂存 WORKING_MEMORY 文本，稍后合并到 user 消息末尾
-        working_memory_text = "\n".join(working_memory_lines)
-
-        # --- 区块6b: [RECENT_MEMORY] 近时记忆 — 最近 10 条记忆摘要 ---
-        try:
-            recent_summaries = await memory_manager._get_recent_memories_for_context(10)
-            if recent_summaries and recent_summaries != "（无）":
-                recent_memory_lines = ["[RECENT_MEMORY]"]
-                recent_memory_lines.append("（以下为最近 10 条记忆摘要，反映近期剧情发展）")
-                recent_memory_lines.append("")
-                for line in recent_summaries.split("\n"):
-                    line = line.strip()
-                    if line:
-                        recent_memory_lines.append(line)
-                blocks.append("\n".join(recent_memory_lines))
-        except Exception as e:
-            logger.debug(f"[AURA→记忆] 获取近时记忆失败（跳过）: {e}")
-
-        # ================================================================
-        # --- 区块7: [LONG_TERM_MEMORY] 长记忆 — 结构化 RAG 召回（v0.7.0）
-        # ================================================================
-        # 策略：
-        # 1. 如果有 IntentResult，用 expanded_scene 做 embedding 粗排 + query_structure 做逐字段精排
-        # 2. 如果没有 IntentResult，降级为传统 embedding + 时间加权
-        # ================================================================
-        query_text = last_input or user_name or ""
-
-        if intent_result and intent_result.should_use():
-            # 结构化 RAG 召回
-            rag_memories = await memory_manager.structured_aware_search(
-                query=intent_result.expanded_scene or query_text,
-                top_k=5,
-                query_structure=intent_result.structure,
-            )
-            logger.info(
-                f"[AURA→RAG] 结构化召回 | query=\"{query_text[:40]}...\" | "
-                f"召回 {len(rag_memories)} 条 | "
-                f"意图: {intent_result.input_type}"
-            )
-        else:
-            # 降级：传统 embedding + 时间加权
-            rag_memories = await memory_manager.search(query_text, top_k=5)
-            logger.info(
-                f"[AURA→RAG] 传统召回 | query=\"{query_text[:40]}...\" | "
-                f"召回 {len(rag_memories)} 条"
-            )
-
-        # 构建记忆区块
-        if rag_memories:
-            # RAG 有数据 → 使用结构化召回结果
-            memory_lines = ["[LONG_TERM_MEMORY]"]
-            memory_lines.append("（以下为与当前场景最相关的长期记忆，由 AURA RAG 系统召回）")
-            memory_lines.append("")
-            for mem in rag_memories:
-                memory_lines.append("- %s" % mem)
-            memory_lines.append("")
-            memory_lines.append("# 记忆应用")
-            memory_lines.append("- 像朋友般自然运用这些记忆，不要一次性提及所有记忆")
-            memory_lines.append("- 选择与当前场景最相关的记忆自然融入叙述")
-            memory_lines.append("- 避免机械式表达如\"根据我的记忆...\"")
-            memory_lines.append("- 共同经历时可温情回忆：\"上次我们讨论很有趣\"")
-            memory_lines.append("")
-            memory_lines.append("记忆是丰富对话的工具，而非对话焦点。")
-            blocks.append("\n".join(memory_lines))
-
-            logger.info(
-                f"[AURA→记忆] 区块注入完成 | "
-                f"{len(rag_memories)}条 | 总字符: {sum(len(m) for m in rag_memories)}"
-            )
-        elif sys_comp.get("long_term_memory"):
-            # RAG 无数据（FAISS 为空）→ 透传 TAVO 原始长记忆
-            tavo_memories = sys_comp["long_term_memory"]
-            memory_lines = ["[LONG_TERM_MEMORY]"]
-            memory_lines.append("（以下为 TAVO 原始长记忆，AURA RAG 系统尚未积累数据）")
-            memory_lines.append("")
-            for mem in tavo_memories:
-                memory_lines.append("- %s" % mem)
-            memory_lines.append("")
-            memory_lines.append("# 记忆应用")
-            memory_lines.append("- 像朋友般自然运用这些记忆，不要一次性提及所有记忆")
-            memory_lines.append("- 选择与当前场景最相关的记忆自然融入叙述")
-            memory_lines.append("- 避免机械式表达如\"根据我的记忆...\"")
-            memory_lines.append("- 共同经历时可温情回忆：\"上次我们讨论很有趣\"")
-            memory_lines.append("")
-            memory_lines.append("记忆是丰富对话的工具，而非对话焦点。")
-            blocks.append("\n".join(memory_lines))
-
-            logger.info(
-                f"[AURA→记忆] 透传 TAVO 原始长记忆 | "
-                f"{len(tavo_memories)}条 | 总字符: {sum(len(m) for m in tavo_memories)}"
-            )
-        else:
-            logger.debug("[AURA→记忆] 无长记忆数据，跳过 [LONG_TERM_MEMORY] 区块")
-
-        # ================================================================
-        # --- [USER_INTENT_TAG] 用户意图标签（v0.7.0）
-        #     由 IntentTagger 解析用户输入后生成，指导主 LLM 生成方向
-        #     仅当置信度 >= 0.6 时注入
-        #
-        # 设计原则：只注入自然语言段落，不注入结构化数据。
-        # 结构化数据（input_type, user_expectation, confidence）仅用于 RAG 匹配，
-        # 不传递给主 LLM，避免诱导 LLM 进行结构化输出或破坏 RP 沉浸感。
-        #
-        # 位置策略：不放入 System Prompt blocks，而是合并到 WORKING_MEMORY 中，
-        # 一起追加到最后一条 user 消息末尾，利用近因效应让 LLM 优先遵循。
-        #
-        # 分段策略：不再在 USER_INTENT_TAG 中写分段要求（DeepSeek 对指令不敏感），
-        # 改为在 OUTPUT_SPEC 中用 few-shot 示例约束输出格式（模仿 > 指令）。
-        # ================================================================
-        if intent_result and intent_result.should_use() and intent_result.implicit_instruction:
-            # 只注入 implicit_instruction（自然语言导演指令），
-            # 去掉 input_type / user_expectation / confidence 等结构化字段
-            # 分段要求已移至 OUTPUT_SPEC 的 few-shot 示例中，此处不再重复
-            intent_instruction = intent_result.implicit_instruction.rstrip()
-            if not intent_instruction.endswith("。"):
-                intent_instruction += "。"
-
-            # 合并到 WORKING_MEMORY 文本中
-            working_memory_text += "\n\n" + f"""[USER_INTENT_TAG]
-{intent_instruction}"""
-            logger.info(
-                f"[AURA→意图] [USER_INTENT_TAG] 已合并到 WORKING_MEMORY | "
-                f"指令: {intent_result.implicit_instruction[:80]}..."
-            )
-
-        # --- 区块8: [WORLD_CONTEXT] 世界书（有则注入，无则跳过） ---
-        if sys_comp["world_book"] and sys_comp["world_book"].strip():
-            blocks.append(f"[WORLD_CONTEXT]\n{sys_comp['world_book'].strip()}")
-
-        # --- 区块9: [OUTPUT_SPEC] 输出格式规范（静态模板）+ COT 自我校验 ---
-        # 注意：DeepSeek 对"指令"不敏感，但对"示例"非常敏感。
-        # 因此用 few-shot 示例替代"请分段"指令，让模型通过模仿来分段。
-        output_spec_block = """[OUTPUT_SPEC]
-- 长度：400-600 字
-- 结构：环境描写(30%) + NPC内心/对话(40%) + 留给user的行动空间(30%)
-- 标记规范：
-  "对话内容"（双引号 = 角色台词）
-  **动作描写**（星号 = 角色动作/表情）
-  （心理活动）（小括号 = 角色内心独白）
-- 禁止：替 user 做决定、推进剧情、OOC
-
-# 输出格式示例（必须严格模仿此格式）
-你的输出格式应如下例：
-
-阳光透过女子学校的铁艺大门，在地面投下斑驳的纹路。秋天的银杏叶被风卷起，在门口的喷泉边打转。
-
-几个正抱着课本路过的女生停下脚步，目光警惕地打量着门口这位不速之客。
-
-校门口的石狮静默矗立，等待着这位闯入者迈出第一步。
-
-注意：
-- 每段之间必须空一行
-- 每段是一个独立的画面
-- 段落长度应错落有致，不要每段等长
-
-# 输出前自我校验（COT）
-在生成最终回复前，请按以下步骤逐项检查：
-1. 这段回复中是否有替 user 生成行动或台词？→ 如果有，删除对应部分
-2. 这段回复是否推进了主线剧情？→ 如果是，改为环境描写或NPC反应
-3. 这段回复是否符合角色设定和当前场景？→ 如果否，重新调整
-4. 标记使用是否正确（台词用"", 动作用**, 心理用()）？→ 如果否，修正
-5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展
-6. 回复格式是否与上述示例一致（每段空行分隔、每段一个独立画面）？→ 如果否，重新分段"""
-        blocks.append(output_spec_block)
-
-        optimized_system = "\n\n".join(blocks)
-        logger.info(
-            f"[AURA→区块重组] System Prompt 重组完成 | "
-            f"区块数: {len(blocks)} | "
-            f"原始: {len(original_system)}字符 → 重组: {len(optimized_system)}字符 | "
-            f"变化: {len(optimized_system) - len(original_system):+d}字符"
-        )
-
-        # [AURA→日志] 打印重组前后的 System Prompt 内容
-        # 同时保存重组后的完整 Prompt 到单独文件，方便查看
-        try:
-            reassembled_dir = "prompt_dumps"
-            os.makedirs(reassembled_dir, exist_ok=True)
-            time_str = time.strftime("%Y%m%d_%H%M%S")
-            reassembled_file = os.path.join(reassembled_dir, f"reassembled_{time_str}.txt")
-            with open(reassembled_file, "w", encoding="utf-8") as f:
-                f.write("=== AURA 重组后 System Prompt ===\n")
-                f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"原始长度: {len(original_system)}字符 → 重组后: {len(optimized_system)}字符\n")
-                f.write(f"区块数: {len(blocks)}\n")
-                f.write(f"RAG来源: aura_faiss\n")
-                f.write(f"{'='*60}\n\n")
-                f.write(optimized_system)
-            logger.info(f"[AURA→日志] 重组后 Prompt 已保存到: {reassembled_file} ({len(optimized_system)}字符)")
-        except Exception as e:
-            logger.warning(f"[AURA→日志] 保存重组后 Prompt 失败: {e}")
-
-        # 替换 System Prompt
-        if messages_list and messages_list[0]["role"] == "system":
-            messages_list[0]["content"] = optimized_system
-
-        # ================================================================
-        # 3d. 结尾限制：利用近因效应（Recency Effect）
-        #     将 WORKING_MEMORY + USER_INTENT_TAG 追加到最后一条 user 消息末尾
-        #     同时给所有 user 消息追加 [系统约束]
-        #
-        # 策略：
-        # - 所有 user 消息末尾追加 [系统约束]（简短约束）
-        # - 最后一条 user 消息额外追加 WORKING_MEMORY（含 USER_INTENT_TAG）
-        #   这样 LLM 在生成回复时，最近看到的就是当前语境+导演指令
-        # ================================================================
-        user_constraint = (
-            "\n\n[系统约束] 请严格遵守以下规则：\n"
-            "1. 禁止生成用户的台词和行动\n"
-            "2. 可以生成其他NPC的台词、行动和环境描写\n"
-            "3. 替用户留出行动空间，不要推进剧情"
-        )
-
-        # 找到最后一条 user 消息的索引
-        last_user_idx = -1
-        for i in range(len(messages_list) - 1, -1, -1):
-            if messages_list[i]["role"] == "user":
-                last_user_idx = i
-                break
-
-        for i, msg in enumerate(messages_list):
-            if msg["role"] == "user":
-                # 避免重复追加（如果已经追加过则跳过）
-                if "[系统约束]" not in msg["content"]:
-                    msg["content"] = msg["content"].rstrip() + user_constraint
-
-                # 最后一条 user 消息额外追加 WORKING_MEMORY（含 USER_INTENT_TAG）
-                if i == last_user_idx and working_memory_text:
-                    msg["content"] = msg["content"].rstrip() + "\n\n" + working_memory_text
-                    logger.info(
-                        f"[AURA→近因] WORKING_MEMORY 已追加到最后一条 user 消息末尾 | "
-                        f"长度: {len(working_memory_text)}字符"
-                    )
-
-        logger.debug(
-            f"[AURA→约束] 已对 {sum(1 for m in messages_list if m['role'] == 'user')} 条 user 消息追加结尾约束"
-        )
-
-    except Exception as e:
-        # 拆解/注入失败不应阻断转发，降级为原始透传
-        logger.warning(f"[AURA→拆解] 拆解/注入失败，降级为原始透传: {e}")
-        messages_list = [msg.model_dump() for msg in request.messages]
-
-    # ============================================================
-    # 3.5 对话同步 + 保存到 SQLite + 触发记忆总结（v0.6.0）
-    # ============================================================
-    try:
-        # 获取或创建 AURA 会话 ID
-        aura_session_id = _session_map.get(session_id, session_id)
-        _session_map[session_id] = aura_session_id
-
-        # ================================================================
-        # 3.5a 对话同步：倒序匹配 TAVO 发来的对话与本地数据库
-        #      处理用户在 TAVO 中的编辑/撤回操作
-        #      在保存新对话之前执行，确保数据库与 TAVO 一致
-        # ================================================================
-        # 提取 TAVO 发来的所有非 system 消息（user + assistant）
-        tavo_dialogue_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.messages
-            if msg.role in ("user", "assistant")
-        ]
-        if tavo_dialogue_messages:
-            await memory_manager.sync_dialogue_from_tavo(aura_session_id, tavo_dialogue_messages)
-
-        # 获取轮次编号
-        round_num = await memory_manager.get_round_number(aura_session_id)
-
-        # 保存用户输入
-        user_content = ""
-        for msg in reversed(request.messages):
-            if msg.role == "user":
-                user_content = msg.content
-                break
-        if user_content:
-            await memory_manager.save_dialogue(aura_session_id, "user", user_content, round_num)
-
-        # 每 5 轮触发 Kimi 总结（异步，不阻塞）
-        if round_num > 0 and round_num % settings.memory_summary_interval == 0:
-            recent = await memory_manager.get_recent_messages(aura_session_id, n=10)
-            if recent:
-                # 异步触发总结，不等待完成
-                asyncio.ensure_future(
-                    memory_manager.summarize_and_store(aura_session_id, recent)
-                )
-                logger.info(f"[AURA→记忆] 触发 Kimi 记忆总结 | 会话: {aura_session_id} | 轮次: {round_num}")
-
-    except Exception as e:
-        logger.warning(f"[AURA→记忆] 保存对话失败（不影响主流程）: {e}")
-
-    # ============================================================
-    # 4. 构建转发请求体
-    # ============================================================
-    forward_payload = {
+        },
+        "messages": [msg.model_dump() for msg in request.messages],
+        "session_id": session_id,
+        "aura_session_id": aura_session_id,
+        "backend": backend,
         "model": request.model,
-        "messages": messages_list,
+        "stream": False,
         "temperature": request.temperature,
-        "stream": request.stream
+        "max_tokens": request.max_tokens,
+        "x_tavo_debug": x_tavo_debug,
+        "user_content": user_content,
+        "round_num": 0,
+        "node_logs": [],
+        "start_time": _time.time(),
     }
-    if request.max_tokens:
-        forward_payload["max_tokens"] = request.max_tokens
 
-    # 清理 API Key 并准备请求头
-    api_key = llm_config.api_key.strip()
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    url = f"{llm_config.base_url.rstrip('/')}/chat/completions"
+    logger.info(f"[LangGraph] 开始执行工作流 | session={session_id} | stream={request.stream}")
 
-    # [AURA→LLM] 记录转发到 LLM 的请求
-    logger.info(f"[AURA→LLM] 转发请求 | 会话: {session_id} | URL: {url} | 后端: {backend} | 模型: {request.model}")
-
-    # [调试日志] 保存 AURA→LLM 的转发内容到独立文件（aura_output_YYYYMMDD_HHMMSS.txt）
     try:
-        prompt_dump_dir = "prompt_dumps"
-        os.makedirs(prompt_dump_dir, exist_ok=True)
-        time_str = time.strftime("%Y%m%d_%H%M%S")
-        aura_output_file = os.path.join(prompt_dump_dir, f"aura_output_{time_str}.txt")
-        with open(aura_output_file, "w", encoding="utf-8") as f:
-            f.write(f"=== AURA→LLM 转发请求 ===\n")
-            f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"会话: {session_id}\n")
-            f.write(f"后端: {backend}\n")
-            f.write(f"模型: {request.model}\n")
-            f.write(f"流式: {request.stream}\n")
-            f.write(f"{'='*60}\n\n")
-            # 写入完整的 messages 列表
-            for i, msg in enumerate(forward_payload.get("messages", [])):
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                f.write(f"--- 消息 {i} | role: {role} | 长度: {len(content)}字符 ---\n")
-                f.write(content)
-                f.write("\n\n")
-            # 写入其他参数
-            f.write(f"{'='*60}\n")
-            f.write(f"其他参数: temperature={forward_payload.get('temperature')}, ")
-            f.write(f"max_tokens={forward_payload.get('max_tokens', 'N/A')}, ")
-            f.write(f"stream={forward_payload.get('stream')}\n")
-        logger.info(f"[AURA→LLM] 调试日志已保存: {aura_output_file}")
+        final_state = await aura_workflow.ainvoke(
+            initial_state,
+            config={"configurable": {"thread_id": aura_session_id}}
+        )
     except Exception as e:
-        logger.warning(f"[AURA→LLM] 保存转发内容失败: {e}")
+        logger.exception(f"[LangGraph] 工作流执行失败: {e}")
+        raise HTTPException(status_code=500, detail=f"工作流执行失败: {str(e)}")
 
-    if settings.debug_mode:
-        masked_key = api_key[:6] + "***" + api_key[-4:] if len(api_key) > 10 else "***"
-        logger.debug(f"[AURA→LLM] API Key: {masked_key}")
-        logger.debug(f"[AURA→LLM] 请求体: {json.dumps(forward_payload, ensure_ascii=False)[:500]}")
+    # ============================================================
+    # 4. 从最终状态构建响应
+    # ============================================================
+    error = final_state.get("error")
+    if error:
+        raise HTTPException(status_code=500, detail=f"处理失败: {error}")
 
-    # 4. 根据是否流式选择不同处理方式
+    response_dict = final_state.get("response")
+    if not response_dict:
+        raise HTTPException(status_code=500, detail="工作流未产出有效响应")
+
+    llm_message = response_dict.get("choices", [{}])[0].get("message", {})
+    llm_content = llm_message.get("content", "")
+    llm_reasoning = llm_message.get("reasoning_content", "")
+    usage = response_dict.get("usage", {})
+
+    # 打印 LangGraph 节点执行摘要
+    node_logs = final_state.get("node_logs", [])
+    total_ms = sum(l.get("elapsed_ms", 0) for l in node_logs)
+    logger.info(
+        f"[LangGraph] 工作流完成 | 总耗时: {total_ms:.1f}ms | "
+        f"节点: {len(node_logs)} | 内容: {len(llm_content)}字"
+    )
+    for log in node_logs:
+        logger.info(
+            f"  → {log['node']}: {log['elapsed_ms']}ms | {log.get('summary', '')}"
+        )
+
+    # ============================================================
+    # 5. 流式/非流式分别返回
+    # ============================================================
     if request.stream:
-        return await _handle_streaming_request(
-            url, headers, forward_payload, session_id, x_tavo_debug,
-            llm_config=llm_config,
-            aura_session_id=aura_session_id, round_num=round_num
+        # LangGraph 内部已完整生成内容，现在模拟 SSE 流式返回
+        return _build_streaming_response(
+            llm_content, session_id, request.model, x_tavo_debug,
+            reasoning_content=llm_reasoning
         )
     else:
-        return await _handle_non_streaming_request(
-            url, headers, forward_payload, session_id, x_tavo_debug, request.model,
-            llm_config=llm_config,
-            aura_session_id=aura_session_id, round_num=round_num
+        # 非流式：包装为 ChatCompletionResponse
+        choices = [Choice(
+            index=0,
+            message=ChatMessageResponse(role="assistant", content=llm_content),
+            finish_reason="stop",
+        )]
+        response_obj = ChatCompletionResponse(
+            id=response_dict.get("id", f"aura-{session_id}"),
+            object="chat.completion",
+            created=response_dict.get("created", int(_time.time())),
+            model=request.model,
+            choices=choices,
         )
+        if usage:
+            response_obj.usage = usage
+        if x_tavo_debug == "true":
+            response_obj.aura_debug = {
+                "session_id": session_id,
+                "timestamp": int(_time.time()),
+                "mode": "langgraph",
+                "backend": backend,
+                "node_count": len(node_logs),
+                "total_ms": total_ms,
+            }
+
+        logger.info(f"[AURA→TAVO] 返回响应 | 会话: {session_id} | 内容: {len(llm_content)}字")
+        return response_obj
+
+
+def _build_streaming_response(
+    full_content: str,
+    session_id: str,
+    model: str,
+    debug_flag: Optional[str],
+    reasoning_content: str = "",
+) -> StreamingResponse:
+    """将完整内容切割为 SSE chunk，模拟流式返回（复用原逻辑）"""
+    import re
+
+    async def stream_generator():
+        if not full_content and not reasoning_content:
+            yield b"data: [DONE]\n\n"
+            return
+
+        # 阶段1：先发送 reasoning_content（思考过程）
+        if reasoning_content:
+            reasoning_segments = _split_into_segments(reasoning_content)
+            for seg in reasoning_segments:
+                if not seg:
+                    continue
+                sse_data = {
+                    "id": f"aura-{session_id}-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"reasoning_content": seg},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                delay = min(0.05, max(0.02, len(seg) * 0.002))
+                await asyncio.sleep(delay)
+
+        # 阶段2：发送 content（正式回复）
+        if full_content:
+            content_segments = _split_into_segments(full_content)
+            logger.info(
+                f"[AURA→TAVO] 模拟流式返回 | 会话: {session_id} | "
+                f"总字符: {len(full_content)} | 思考: {len(reasoning_content)}字 | "
+                f"切分段数: {len(content_segments)}"
+            )
+
+            for segment in content_segments:
+                if not segment:
+                    continue
+                sse_data = {
+                    "id": f"aura-{session_id}-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": segment},
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(sse_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                delay = min(0.08, max(0.03, len(segment) * 0.003))
+                await asyncio.sleep(delay)
+
+        yield b"data: [DONE]\n\n"
+        logger.info(f"[AURA→TAVO] 流式返回完成 | 会话: {session_id}")
+
+    extra_headers = {}
+    if debug_flag == "true":
+        extra_headers["X-Aura-Debug"] = "true"
+        extra_headers["X-Aura-Session"] = session_id
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers=extra_headers
+    )
+
+
+def _split_into_segments(text: str) -> List[str]:
+    """将文本按段落+句子粒度切分为 SSE 块"""
+    import re
+    paragraphs = text.split('\n\n')
+    sentence_delimiters = re.compile(
+        r'(?<=[。！？.!?])(?:\s*(?=[\u4e00-\u9fff"「「*]))'
+        r'|(?<=[。！？.!?])'
+    )
+
+    segments = []
+    for i, para in enumerate(paragraphs):
+        if not para.strip():
+            continue
+        raw_sentences = sentence_delimiters.split(para)
+        para_sentences = [s.strip() for s in raw_sentences if s.strip()]
+        if not para_sentences:
+            para_text = para.strip()
+        else:
+            para_text = ''.join(para_sentences)
+        if i < len(paragraphs) - 1:
+            para_text += '\n\n'
+        segments.append(para_text)
+
+    if not segments:
+        segments = [text[i:i+20] for i in range(0, len(text), 20)]
+
+    return segments
 
 async def _handle_non_streaming_request(
     url: str,
@@ -1128,8 +804,8 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "AURA",
-        "version": "0.6.0",
-        "mode": "block-reassembly",
+        "version": "0.8.0",
+        "mode": "langgraph-state-machine",
         "debug": settings.debug_mode
     }
 
@@ -1138,7 +814,7 @@ async def initialize_aura():
     """初始化AURA系统"""
     try:
         logger.info("AURA 初始化完成")
-        logger.info(f"服务模式: 区块化重组 + 3层记忆 + 意图感知 (v0.7.0)")
+        logger.info(f"服务模式: LangGraph 状态机 + 3层记忆 + 意图感知 (v0.8.0)")
         logger.info(f"调试模式: {'启用' if settings.debug_mode else '禁用'}")
 
         # 验证LLM配置

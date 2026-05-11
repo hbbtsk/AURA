@@ -50,8 +50,8 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "AURA",
-        "version": "0.2.0",
-        "mode": "interception",
+        "version": "0.8.0",
+        "mode": "langgraph-state-machine",
         "debug": settings.debug_mode
     }
 

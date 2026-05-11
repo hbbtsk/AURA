@@ -23,3 +23,7 @@ modelscope>=1.0.0
 
 # Environment Configuration
 python-dotenv==1.0.0
+
+# LangGraph Orchestration
+langgraph>=0.2.0
+langchain-core>=0.3.0

@@ -70,9 +70,9 @@ class Settings(BaseSettings):
     llm_summary_timeout: int = 30
 
     # ========== 场景参数：意图分析（intent） ==========
-    llm_intent_temperature: float = 1.0  # Kimi k2.6 只允许 temperature=1
-    llm_intent_max_tokens: int = 2048  # Kimi k2.6 有 reasoning_content，需要更多 token
-    llm_intent_timeout: int = 60  # Kimi k2.6 reasoning 较慢
+    llm_intent_temperature: float = 0.3  # 意图分析用低 temperature 保证一致性
+    llm_intent_max_tokens: int = 1024  # 意图分析输出很小，不需要太多 token
+    llm_intent_timeout: int = 15  # 非 reasoning 模型，15 秒足够
 
     # ========== 记忆总结 ==========
     memory_summary_interval: int = 5  # 每 N 轮对话触发一次记忆总结
@@ -142,10 +142,14 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
         if not settings.kimi_api_key:
             logger.warning("[Config] Kimi API密钥未配置，返回 None")
             return None
+        # 意图分析场景用快速版（无 reasoning），主对话用标准版
+        model_name = settings.kimi_model
+        if scene == "intent":
+            model_name = "kimi-k2-turbo-preview"
         return LLMConfig(
             base_url=settings.kimi_base_url,
             api_key=settings.kimi_api_key,
-            model=settings.kimi_model,
+            model=model_name,
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
