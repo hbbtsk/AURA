@@ -62,12 +62,6 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         # 2. 提取用户信息
         has_user_prefix = sys_comp.get("has_user_prefix", True)
         user_name = state.get("user_name", "")
-        timeline_state = ""
-        if sys_comp["authority_ban"]:
-            for line in sys_comp["authority_ban"].split("\n"):
-                if "当前时间线" in line:
-                    timeline_state = line.strip()
-                    break
 
         # 3. 从 state 读取意图解析结果（已在 InputReceive 节点中提前执行）
         dialogue = decomposed.get("dialogue", {})
@@ -299,5 +293,4 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         "optimized_system": optimized_system if 'optimized_system' in locals() else "",
         "messages_list": messages_list,
         "has_user_prefix": has_user_prefix if 'has_user_prefix' in locals() else True,
-        "timeline_state": timeline_state if 'timeline_state' in locals() else "",
     }

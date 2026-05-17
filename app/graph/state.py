@@ -42,7 +42,6 @@ class AgentState(TypedDict, total=False):
     messages_list: List[Dict[str, str]]    # 最终转发的消息列表
     user_name: str                         # 提取的用户名
     has_user_prefix: bool                  # 是否有用户自定义前缀
-    timeline_state: str                    # 时间线状态
 
     # ================================================================
     # 实体 & 关系图谱层（Week 3 扩展）
