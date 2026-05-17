@@ -46,6 +46,6 @@ def should_retry_after_check(state: "AgentState") -> str:
     logger.warning(
         f"[LangGraph→条件] 质检不通过 → 重试(retry={retry+1}/{max_retries}) | 原因: {'; '.join(reasons)}"
     )
-    # 更新 retry_count，路由到 ModelDialectCompiler
+    # 更新 retry_count，路由回并行准备节点
     state["retry_count"] = retry + 1
-    return "model_dialect_compiler"
+    return "retry"
