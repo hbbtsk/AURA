@@ -154,10 +154,11 @@ class IntentTagger:
         """解析 LLM 返回的 JSON 响应"""
         try:
             # 处理可能的 markdown 代码块包裹
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
+            # 匹配 ```json ... ``` 或 ``` ... ```（贪婪匹配第一个代码块）
+            import re
+            code_block_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+            if code_block_match:
+                content = code_block_match.group(1).strip()
 
             data = json.loads(content)
 

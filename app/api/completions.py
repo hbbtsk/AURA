@@ -21,14 +21,12 @@ import asyncio
 import httpx
 import json
 import time
-import logging
 from typing import List, Literal, Optional, Dict, Any, Union
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 
 from app.core.config import settings, get_llm_config, validate_llm_config, LLMConfig
-from app.core.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
 from app.core.intent_tagger import intent_tagger
 from app.memory.models import IntentStructure, IntentResult
@@ -40,13 +38,23 @@ setup_logging()
 
 logger = get_logger("aura-completions")
 
-# ============================================================
-# 全局拆解器实例
-# ============================================================
-decomposer = PromptDecomposer()
+# 会话 ID 映射（TAVO session → AURA session），带 LRU 清理防止内存泄漏
+from collections import OrderedDict
 
-# 会话 ID 映射（TAVO session → AURA session）
-_session_map: Dict[str, str] = {}
+class LRUOrderedDict(OrderedDict):
+    """固定容量的 OrderedDict，超出时自动淘汰最早访问的条目"""
+    def __init__(self, maxsize: int = 1000):
+        self._maxsize = maxsize
+        super().__init__()
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > self._maxsize:
+            self.popitem(last=False)
+
+_session_map = LRUOrderedDict(maxsize=1000)
 
 router = APIRouter()
 
@@ -237,7 +245,6 @@ async def chat_completion(
             "stream": False,  # LangGraph 内部总为非流式（先完整生成 → 再流式返回）
             "max_tokens": request.max_tokens,
         },
-        "messages": [msg.model_dump() for msg in request.messages],
         "session_id": session_id,
         "aura_session_id": aura_session_id,
         "backend": backend,

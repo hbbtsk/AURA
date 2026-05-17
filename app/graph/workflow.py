@@ -30,8 +30,10 @@ import os
 import re
 import asyncio
 import time
-import logging
 from typing import Optional, Dict, Any
+
+from app.utils import get_logger
+logger = get_logger("aura-graph")
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -43,7 +45,6 @@ from app.memory import memory_manager
 from app.core.intent_tagger import intent_tagger
 from app.memory.models import IntentResult
 
-logger = logging.getLogger("aura-graph")
 decomposer = PromptDecomposer()
 
 # ================================================================

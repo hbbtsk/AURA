@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AURA",
     description="Agentic Unified Roleplay Assistant - Tavo→AURA→LLM桥梁",
-    version="0.6.0",
+    version="0.8.2",
     lifespan=lifespan
 )
 

@@ -16,8 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger("aura.config")
 
 
-# 项目根目录（config.py 所在目录的父目录）
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 项目根目录（config.py 从 app/core/ 需要上溯两层才到项目根）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class LLMConfig(BaseSettings):
