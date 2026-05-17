@@ -1,7 +1,7 @@
 # AURA 架构文档
 
 > **AURA** — Agentic Unified Roleplay Assistant
-> 版本: v0.8.0 | 最后更新: 2026-05-11
+> 版本: v0.8.1 | 最后更新: 2026-05-17
 
 ---
 
@@ -19,6 +19,7 @@
    - 5.5 [意图解析器: `app/intent_tagger.py`](#55-意图解析器-appintent_taggerpy)
    - 5.6 [记忆管理层: `app/memory/manager.py`](#56-记忆管理层-appmemorymanagerpy)
    - 5.7 [数据模型: `app/memory/models.py`](#57-数据模型-appmemorymodelspy)
+   - 5.8 [工具模块: `app/utils/`](#58-工具模块-apputils)
 6. [LangGraph 状态机 (v0.8.0)](#6-langgraph-状态机-v080)
 7. [Prompt 编译管道](#7-prompt-编译管道)
 8. [三层记忆架构](#8-三层记忆架构)
@@ -350,6 +351,39 @@ class IntentResult:
     user_expectation: str         # → 日志/调试
 ```
 
+### 4.8 工具模块: [`app/utils/`](app/utils/)
+
+存放横切关注点（cross-cutting concerns），当前包含日志配置模块。
+
+#### [`app/utils/logging.py`](app/utils/logging.py)
+
+将日志配置从 [`app/api/completions.py`](app/api/completions.py) 中拆离，统一管理：
+
+| 功能 | 说明 |
+|------|------|
+| `setup_logging()` | 配置全局日志系统：RotatingFileHandler（5MB/文件，保留 3 个备份）+ StreamHandler（控制台） |
+| `get_logger()` | 获取模块级 logger，用法 `logger = get_logger(__name__)` |
+| `suppress_library_logging()` | 抑制第三方库日志级别（默认 WARNING），内置抑制 httpx / httpcore |
+
+**设计要点**：
+
+- **幂等初始化**：`_initialized` 全局标志防止重复配置
+- **调试模式感知**：`settings.debug_mode` 控制根日志级别（DEBUG / INFO）
+- **文件轮转**：日志文件自动轮转，避免磁盘占满
+- **库抑制**：httpx / httpcore 的 DEBUG 日志过于嘈杂，默认提升到 WARNING
+
+**用法**：
+
+```python
+# 应用入口处调用一次
+from app.utils import setup_logging
+setup_logging()
+
+# 各模块获取 logger
+from app.utils import get_logger
+logger = get_logger(__name__)
+```
+
 ---
 
 ## 5. LangGraph 状态机 (v0.8.0)
@@ -660,6 +694,10 @@ c:\AURA/
 │       ├── manager.py            # 记忆管理器（FAISS + SQLite）
 │       └── models.py             # 数据模型（IntentStructure, IntentResult）
 │
+│   └── utils/                    # 工具模块（v0.8.1）
+│       ├── __init__.py           # 导出 setup_logging, get_logger, suppress_library_logging
+│       └── logging.py            # 日志配置（RotatingFileHandler + StreamHandler + 库抑制）
+│
 ├── prompt_dumps/                 # 调试日志目录（自动生成）
 │   ├── prompt_*.txt              # TAVO 原始请求
 │   ├── reassembled_*.txt         # AURA 重组后 Prompt
@@ -686,3 +724,4 @@ c:\AURA/
 | v0.7.0 | 2026-05-10 | 三层记忆 + IntentTagger + 意图感知 RAG v2 |
 | v0.7.1 | 2026-05-10 | 近因效应策略 + SSE 段落修复 + Kimi k2.6 适配 |
 | **v0.8.0** | **2026-05-11** | **LangGraph 15 节点状态机 + 零侵入编排层 + SSE 内部非流式化** |
+| **v0.8.1** | **2026-05-17** | **日志模块提取到 `app/utils/logging.py` + 架构文档更新** |
