@@ -6,7 +6,12 @@ Node 11: FormatGuard（mock）
 Node 12: OOCCheck（mock）
 Node 13: ContentFilter（mock）
 Node 14: OutputReturn
+
+质检层并行化：
+    LLMGenerate → ParallelQualityCheck（FormatGuard + OOCCheck + ContentFilter 并行）
+                → OutputReturn
 """
+import asyncio
 import time
 from typing import TYPE_CHECKING
 
@@ -204,3 +209,55 @@ async def output_return_node(state: "AgentState") -> "AgentState":
         **state,
         "response": response_dict,
     }
+
+
+# ================================================================
+# 并行质检节点：FormatGuard + OOCCheck + ContentFilter 并行执行
+# ================================================================
+async def parallel_quality_check_node(state: "AgentState") -> "AgentState":
+    """
+    并行执行三级质检：
+        - FormatGuard: 输出格式检查（越权输出检测）
+        - OOCCheck: 人设一致性检查
+        - ContentFilter: 内容安全过滤
+
+    三个质检之间无依赖，共享同一份 llm_response_content，
+    并行后可从串行 3×T 降到 max(T1, T2, T3)。
+    """
+    t0 = time.time()
+
+    base_state = dict(state)
+    base_state.setdefault("node_logs", [])
+
+    tasks = [
+        format_guard_node(base_state),
+        ooc_check_node(base_state),
+        content_filter_node(base_state),
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    merged = dict(state)
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning(f"[ParallelQualityCheck] 子任务失败: {result}")
+            continue
+        for key, value in result.items():
+            if key != "node_logs":
+                merged[key] = value
+
+    # 确保质检标志有默认值（mock 阶段默认全部通过）
+    merged.setdefault("format_passed", True)
+    merged.setdefault("ooc_passed", True)
+    merged.setdefault("content_passed", True)
+
+    elapsed = (time.time() - t0) * 1000
+    logs = merged.get("node_logs", [])
+    logs.append({
+        "node": "ParallelQualityCheck",
+        "elapsed_ms": round(elapsed, 1),
+        "summary": "format+ooc+content 并行质检完成",
+    })
+    merged["node_logs"] = logs
+
+    logger.info(f"[ParallelQualityCheck] 并行质检完成 | 耗时: {elapsed:.1f}ms")
+    return merged

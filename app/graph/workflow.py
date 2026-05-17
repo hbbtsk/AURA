@@ -45,10 +45,8 @@ from app.graph.nodes import (
     # --- LLM 生成层：调用大模型 ---
     llm_generate_node,              # 调用 LLM 后端生成回复（httpx 非流式）
 
-    # --- 质检层：多级内容过滤 ---
-    format_guard_node,              # 检查输出格式是否符合预期
-    ooc_check_node,                 # 检查是否存在 OOC（脱离角色）内容（预留）
-    content_filter_node,            # 内容安全过滤（预留）
+    # --- 质检层：多级内容过滤（并行） ---
+    parallel_quality_check_node,    # 并行执行 FormatGuard + OOCCheck + ContentFilter
 
     # --- 输出层：返回 & 记忆固化 ---
     output_return_node,             # 组装最终响应，写入 state["response"]
@@ -122,9 +120,7 @@ workflow.add_node("input_receive", input_receive_node)
 workflow.add_node("parallel_preparation", parallel_preparation_node)
 workflow.add_node("context_assemble", context_assemble_node)
 workflow.add_node("llm_generate", llm_generate_node)
-workflow.add_node("format_guard", format_guard_node)
-workflow.add_node("ooc_check", ooc_check_node)
-workflow.add_node("content_filter", content_filter_node)
+workflow.add_node("parallel_quality_check", parallel_quality_check_node)
 workflow.add_node("output_return", output_return_node)
 workflow.add_node("memory_extract", memory_extract_node)
 
@@ -135,13 +131,11 @@ workflow.set_entry_point("input_receive")
 workflow.add_edge("input_receive", "parallel_preparation")
 workflow.add_edge("parallel_preparation", "context_assemble")
 workflow.add_edge("context_assemble", "llm_generate")
-workflow.add_edge("llm_generate", "format_guard")
-workflow.add_edge("format_guard", "ooc_check")
-workflow.add_edge("ooc_check", "content_filter")
+workflow.add_edge("llm_generate", "parallel_quality_check")
 
-# 条件边：ContentFilter 后 → 通过则 OutputReturn，不通过则回退到并行准备重试
+# 条件边：并行质检后 → 通过则 OutputReturn，不通过则回退到并行准备重试
 workflow.add_conditional_edges(
-    "content_filter",
+    "parallel_quality_check",
     should_retry_after_check,
     {
         "output_return": "output_return",
@@ -158,4 +152,4 @@ workflow.add_edge("memory_extract", END)
 memory_saver = MemorySaver()
 aura_workflow = workflow.compile(checkpointer=memory_saver)
 
-logger.info("[LangGraph] AURA 工作流编译完成 | 显式节点: 9 | 并行子任务: 6 | checkpointer: MemorySaver")
+logger.info("[LangGraph] AURA 工作流编译完成 | 显式节点: 7 | 并行子任务: 9 | checkpointer: MemorySaver")

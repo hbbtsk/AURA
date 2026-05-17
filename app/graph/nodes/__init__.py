@@ -23,6 +23,7 @@ from app.graph.nodes.llm_quality_output import (
     ooc_check_node,
     content_filter_node,
     output_return_node,
+    parallel_quality_check_node,
 )
 from app.graph.nodes.conditional_edges import should_retry_after_check
 
@@ -41,6 +42,7 @@ __all__ = [
     "ooc_check_node",
     "content_filter_node",
     "output_return_node",
+    "parallel_quality_check_node",
     "memory_extract_node",
     "should_retry_after_check",
 ]
