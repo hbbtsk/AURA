@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api.completions import initialize_aura
+from app.api import initialize_aura
 from app.core.config import settings
 
 @asynccontextmanager
@@ -40,7 +40,7 @@ app.add_middleware(
 )
 
 # 注册路由
-from app.api.completions import router as aura_router
+from app.api import router as aura_router
 app.include_router(aura_router, prefix="/v1")
 
 # 健康检查端点
