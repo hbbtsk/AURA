@@ -27,10 +27,10 @@ from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.config import settings, get_llm_config, validate_llm_config, LLMConfig
-from app.prompt_decomposer import PromptDecomposer
+from app.core.config import settings, get_llm_config, validate_llm_config, LLMConfig
+from app.core.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
-from app.intent_tagger import intent_tagger
+from app.core.intent_tagger import intent_tagger
 from app.memory.models import IntentStructure, IntentResult
 from app.graph.workflow import aura_workflow
 from app.utils.logging import setup_logging, get_logger

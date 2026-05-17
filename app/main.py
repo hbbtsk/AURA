@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.completions import initialize_aura
-from app.config import settings
+from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

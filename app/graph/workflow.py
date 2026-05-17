@@ -37,10 +37,10 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.graph.state import AgentState
-from app.config import settings, get_llm_config, LLMConfig
-from app.prompt_decomposer import PromptDecomposer
+from app.core.config import settings, get_llm_config, LLMConfig
+from app.core.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
-from app.intent_tagger import intent_tagger
+from app.core.intent_tagger import intent_tagger
 from app.memory.models import IntentResult
 
 logger = logging.getLogger("aura-graph")

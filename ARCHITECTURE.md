@@ -1,7 +1,7 @@
 # AURA 架构文档
 
 > **AURA** — Agentic Unified Roleplay Assistant
-> 版本: v0.8.1 | 最后更新: 2026-05-17
+> 版本: v0.8.2 | 最后更新: 2026-05-17
 
 ---
 
@@ -676,9 +676,12 @@ c:\AURA/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                   # FastAPI 入口
-│   ├── config.py                 # 集中配置管理
-│   ├── intent_tagger.py          # 意图解析器
-│   ├── prompt_decomposer.py      # Prompt 拆解器
+│   │
+│   ├── core/                     # 核心业务逻辑（v0.8.2）
+│   │   ├── __init__.py
+│   │   ├── config.py             # 集中配置管理
+│   │   ├── intent_tagger.py      # 意图解析器
+│   │   └── prompt_decomposer.py  # Prompt 拆解器
 │   │
 │   ├── api/
 │   │   ├── __init__.py
@@ -689,11 +692,11 @@ c:\AURA/
 │   │   ├── state.py              # AgentState 定义
 │   │   └── workflow.py           # 15 节点 StateGraph
 │   │
-│   └── memory/
-│       ├── __init__.py
-│       ├── manager.py            # 记忆管理器（FAISS + SQLite）
-│       └── models.py             # 数据模型（IntentStructure, IntentResult）
-│
+│   ├── memory/
+│   │   ├── __init__.py
+│   │   ├── manager.py            # 记忆管理器（FAISS + SQLite）
+│   │   └── models.py             # 数据模型（IntentStructure, IntentResult）
+│   │
 │   └── utils/                    # 工具模块（v0.8.1）
 │       ├── __init__.py           # 导出 setup_logging, get_logger, suppress_library_logging
 │       └── logging.py            # 日志配置（RotatingFileHandler + StreamHandler + 库抑制）
@@ -725,3 +728,4 @@ c:\AURA/
 | v0.7.1 | 2026-05-10 | 近因效应策略 + SSE 段落修复 + Kimi k2.6 适配 |
 | **v0.8.0** | **2026-05-11** | **LangGraph 15 节点状态机 + 零侵入编排层 + SSE 内部非流式化** |
 | **v0.8.1** | **2026-05-17** | **日志模块提取到 `app/utils/logging.py` + 架构文档更新** |
+| **v0.8.2** | **2026-05-17** | **模块重组：`app/core/` 目录，`config.py`/`prompt_decomposer.py`/`intent_tagger.py` 移入** |

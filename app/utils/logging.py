@@ -21,7 +21,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
-from app.config import settings
+from app.core.config import settings
 
 # 日志目录（相对于项目根目录）
 LOG_DIR = "logs"

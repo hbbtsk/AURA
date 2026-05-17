@@ -16,7 +16,7 @@ from typing import Optional
 
 import httpx
 
-from app.config import settings, get_llm_config
+from app.core.config import settings, get_llm_config
 from app.memory.models import IntentStructure, IntentResult
 
 logger = logging.getLogger("aura.intent_tagger")

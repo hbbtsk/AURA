@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from app.config import settings, get_llm_config
+from app.core.config import settings, get_llm_config
 from app.memory.models import IntentStructure, STRUCTURE_FIELD_WEIGHTS
 
 logger = logging.getLogger("aura.memory")
