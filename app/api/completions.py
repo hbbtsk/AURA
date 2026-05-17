@@ -22,7 +22,6 @@ import httpx
 import json
 import time
 import logging
-from logging.handlers import RotatingFileHandler
 from typing import List, Literal, Optional, Dict, Any, Union
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
@@ -34,45 +33,12 @@ from app.memory import memory_manager
 from app.intent_tagger import intent_tagger
 from app.memory.models import IntentStructure, IntentResult
 from app.graph.workflow import aura_workflow
+from app.utils.logging import setup_logging, get_logger
 
-# 确保日志目录存在
-LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
+# 初始化全局日志配置
+setup_logging()
 
-# 配置日志（使用 RotatingFileHandler 带轮转，输出到 logs/ 目录）
-_log_level = logging.DEBUG if settings.debug_mode else logging.INFO
-
-# 文件处理器 - 每个文件 5MB，保留 3 个备份
-_file_handler = RotatingFileHandler(
-    os.path.join(LOG_DIR, "aura.log"),
-    maxBytes=5 * 1024 * 1024,
-    backupCount=3,
-    encoding="utf-8"
-)
-_file_handler.setLevel(logging.DEBUG)  # 文件记录所有级别
-
-# 控制台处理器 - 只输出 INFO 及以上，减少终端噪音
-_console_handler = logging.StreamHandler()
-_console_handler.setLevel(logging.INFO)
-
-# 统一格式
-_formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-_file_handler.setFormatter(_formatter)
-_console_handler.setFormatter(_formatter)
-
-# 配置根日志器
-logging.basicConfig(
-    level=_log_level,
-    handlers=[_file_handler, _console_handler]
-)
-
-# 抑制 httpx 和 httpcore 的 DEBUG 日志（太嘈杂）
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-logger = logging.getLogger("aura-completions")
+logger = get_logger("aura-completions")
 
 # ============================================================
 # 全局拆解器实例
