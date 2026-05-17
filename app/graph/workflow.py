@@ -33,22 +33,35 @@ from app.graph.state import AgentState
 from app.utils import get_logger
 
 from app.graph.nodes import (
-    input_receive_node,
-    entity_extract_node,
-    emotion_analyze_node,
-    memory_decision_node,
-    memory_retrieve_node,
-    state_manager_node,
-    style_injection_node,
-    model_dialect_compiler_node,
-    context_assemble_node,
-    llm_generate_node,
-    format_guard_node,
-    ooc_check_node,
-    content_filter_node,
-    output_return_node,
-    memory_extract_node,
-    should_retry_after_check,
+    # --- 输入层：接收 & 理解用户输入 ---
+    input_receive_node,             # 接收 TAVO 请求，提取用户名、解析意图标签
+    entity_extract_node,            # 从对话中抽取角色/实体（预留）
+    emotion_analyze_node,           # 分析用户输入的情绪倾向（预留）
+
+    # --- 记忆层：记忆决策 & 检索 ---
+    memory_decision_node,           # 判断本轮是否需要查询长记忆
+    memory_retrieve_node,           # FAISS 向量检索 + 结构化感知匹配 Top-K
+
+    # --- 状态 & 风格层：角色状态维护 & Prompt 编译 ---
+    state_manager_node,             # 维护角色状态 / 时间线 / dynamic_state
+    style_injection_node,           # 注入文风控制指令（预留）
+    model_dialect_compiler_node,    # 模型方言编译（预留，适配不同 LLM 特性）
+    context_assemble_node,          # 9 区块 Prompt 组装（核心编译逻辑）
+
+    # --- LLM 生成层：调用大模型 ---
+    llm_generate_node,              # 调用 LLM 后端生成回复（httpx 非流式）
+
+    # --- 质检层：多级内容过滤 ---
+    format_guard_node,              # 检查输出格式是否符合预期
+    ooc_check_node,                 # 检查是否存在 OOC（脱离角色）内容（预留）
+    content_filter_node,            # 内容安全过滤（预留）
+
+    # --- 输出层：返回 & 记忆固化 ---
+    output_return_node,             # 组装最终响应，写入 state["response"]
+    memory_extract_node,            # 提取本轮对话要点，写入 FAISS + SQLite
+
+    # --- 条件边：质检失败时重试 ---
+    should_retry_after_check,       # 判断是否需要回退到 ModelDialectCompiler 重试
 )
 
 logger = get_logger("aura-graph")
