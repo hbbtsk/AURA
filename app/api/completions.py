@@ -3,7 +3,6 @@ AURA completions API — LangGraph 编排入口
 
 职责：
   - /chat/completions 核心处理逻辑（请求验证、AgentState 组装、LangGraph 调用、响应构建）
-  - 会话 ID 映射管理（LRU 清理防止内存泄漏）
   - 系统初始化入口 initialize_aura()
 
 v0.8.0 架构：
@@ -21,7 +20,6 @@ import os
 import json
 import time
 from typing import Optional, Dict, Any
-from collections import OrderedDict
 
 from fastapi import HTTPException, Header
 
@@ -44,24 +42,6 @@ from app.api.streaming import _build_streaming_response
 setup_logging()
 
 logger = get_logger("aura-completions")
-
-
-# 会话 ID 映射（TAVO session → AURA session），带 LRU 清理防止内存泄漏
-class LRUOrderedDict(OrderedDict):
-    """固定容量的 OrderedDict，超出时自动淘汰最早访问的条目"""
-    def __init__(self, maxsize: int = 1000):
-        self._maxsize = maxsize
-        super().__init__()
-
-    def __setitem__(self, key, value):
-        if key in self:
-            self.move_to_end(key)
-        super().__setitem__(key, value)
-        if len(self) > self._maxsize:
-            self.popitem(last=False)
-
-
-_session_map = LRUOrderedDict(maxsize=1000)
 
 
 # --- 核心API处理 ---
@@ -170,10 +150,6 @@ async def chat_completion(
             user_content = msg.content
             break
 
-    # 获取 AURA 会话 ID
-    aura_session_id = _session_map.get(session_id, session_id)
-    _session_map[session_id] = aura_session_id
-
     initial_state = {
         "request": {
             "model": request.model,
@@ -183,7 +159,6 @@ async def chat_completion(
             "max_tokens": request.max_tokens,
         },
         "session_id": session_id,
-        "aura_session_id": aura_session_id,
         "backend": backend,
         "model": request.model,
         "stream": False,
@@ -201,7 +176,7 @@ async def chat_completion(
     try:
         final_state = await aura_workflow.ainvoke(
             initial_state,
-            config={"configurable": {"thread_id": aura_session_id}}
+            config={"configurable": {"thread_id": session_id}}
         )
     except Exception as e:
         logger.exception(f"[LangGraph] 工作流执行失败: {e}")
