@@ -1,17 +1,14 @@
 """
 条件边：质检 → 重试 or 放行
 """
-from typing import TYPE_CHECKING
+from typing import Dict, Any
 
 from app.utils import get_logger
-
-if TYPE_CHECKING:
-    from app.graph.state import AgentState
 
 logger = get_logger("aura-graph")
 
 
-def should_retry_after_check(state: "AgentState") -> str:
+def should_retry_after_check(state: Dict[str, Any]) -> str:
     """
     FormatGuard/OOCCheck/ContentFilter 后的条件路由。
     任一不通过 → 重试（最多 max_retries 次）
