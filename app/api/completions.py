@@ -93,44 +93,6 @@ async def chat_completion(
         raise HTTPException(status_code=400, detail="model 字段不能为空")
 
     # ============================================================
-    # 1.5 保存完整 Prompt 到本地文件
-    # ============================================================
-    try:
-        prompt_dump_dir = "prompt_dumps"
-        os.makedirs(prompt_dump_dir, exist_ok=True)
-        time_str = time.strftime("%Y%m%d_%H%M%S")
-        dump_file = os.path.join(prompt_dump_dir, f"prompt_{time_str}.txt")
-        with open(dump_file, "w", encoding="utf-8") as f:
-            f.write(f"=== TAVO 完整请求转储 ===\n")
-            f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"模型: {request.model}\n")
-            f.write(f"流式: {request.stream}\n")
-            f.write(f"消息数: {len(request.messages)}\n")
-            f.write(f"{'='*60}\n\n")
-            for i, msg in enumerate(request.messages):
-                f.write(f"--- 消息 {i} | role: {msg.role} | 长度: {len(msg.content)}字符 ---\n")
-                f.write(msg.content)
-                f.write("\n\n")
-        file_size = os.path.getsize(dump_file)
-        logger.info(f"[TAVO→AURA] Prompt 已保存到: {dump_file} ({file_size}字节)")
-
-        tavo_input_file = os.path.join(prompt_dump_dir, f"tavo_input_{time_str}.txt")
-        with open(tavo_input_file, "w", encoding="utf-8") as f:
-            f.write(f"=== TAVO 原始请求 ===\n")
-            f.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"模型: {request.model}\n")
-            f.write(f"流式: {request.stream}\n")
-            f.write(f"消息数: {len(request.messages)}\n")
-            f.write(f"{'='*60}\n\n")
-            for i, msg in enumerate(request.messages):
-                f.write(f"--- 消息 {i} | role: {msg.role} | 长度: {len(msg.content)}字符 ---\n")
-                f.write(msg.content)
-                f.write("\n\n")
-        logger.info(f"[TAVO→AURA] 调试日志已保存: {tavo_input_file}")
-    except Exception as e:
-        logger.warning(f"[TAVO→AURA] 保存 Prompt 失败: {e}")
-
-    # ============================================================
     # 2. 获取后端配置
     # ============================================================
     backend = get_backend_for_model(request.model)

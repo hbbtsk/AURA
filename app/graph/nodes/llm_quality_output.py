@@ -65,6 +65,7 @@ async def llm_generate_node(state: "AgentState") -> "AgentState":
         }
 
     messages_list = state.get("messages_list", [])
+
     payload = {
         "model": state.get("model", "deepseek-v4-flash"),
         "messages": messages_list,
