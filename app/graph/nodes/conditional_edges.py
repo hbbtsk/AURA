@@ -13,6 +13,9 @@ def should_retry_after_check(state: Dict[str, Any]) -> str:
     FormatGuard/OOCCheck/ContentFilter 后的条件路由。
     任一不通过 → 重试（最多 max_retries 次）
     全部通过或超过重试次数 → 放行到 OutputReturn
+
+    重试路径：quality_check ─fail→ RetryStrategyNode ─→ ContextAssemble ─→ LLMGenerate
+    不回到 parallel_preparation（避免重做记忆检索/实体提取等无状态变化的操作）
     """
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
@@ -43,6 +46,6 @@ def should_retry_after_check(state: Dict[str, Any]) -> str:
     logger.warning(
         f"[LangGraph→条件] 质检不通过 → 重试(retry={retry+1}/{max_retries}) | 原因: {'; '.join(reasons)}"
     )
-    # 更新 retry_count，路由回并行准备节点
+    # 更新 retry_count，路由到 RetryStrategy 节点（精准回退，不做无效计算）
     state["retry_count"] = retry + 1
-    return "retry"
+    return "retry_strategy"

@@ -1,21 +1,18 @@
 """
-Node 9: ContextAssemble
+Node 10: ContextAssemble
 
-Prompt 区块化重组 — 原 completions.py 核心逻辑（已真实化）
+Prompt 区块化重组 — 从 PromptDecomposer 产出的结构化数据组装 9 区块 System Prompt
 """
 import time
 from typing import TYPE_CHECKING
 
 from app.utils import get_logger
-from app.core.prompt_decomposer import PromptDecomposer
 from app.memory import memory_manager
 
 if TYPE_CHECKING:
     from app.graph.state import AgentState
 
 logger = get_logger("aura-graph")
-
-decomposer = PromptDecomposer()
 
 
 def _log_node_start(state: "AgentState", node_name: str) -> float:
@@ -40,30 +37,31 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
 
 
 async def context_assemble_node(state: "AgentState") -> "AgentState":
-    """Prompt 区块化重组 — 原 completions.py 核心逻辑（已真实化）"""
+    """Prompt 区块化重组 — 从上游节点产出的结构化数据组装 9 区块 System Prompt"""
     t0 = _log_node_start(state, "ContextAssemble")
 
-    request = state["request"]
-    model = request.get("model", "")
-    raw_messages = request.get("messages", [])
+    raw_messages = state.get("messages", [])
     messages_list = [m.copy() for m in raw_messages]
 
-    try:
-        # 1. Prompt 拆解
-        decomposed = decomposer.decompose({
-            "model": model,
-            "messages": raw_messages,
-            "temperature": request.get("temperature"),
-            "stream": request.get("stream"),
-            "max_tokens": request.get("max_tokens"),
-        })
-        sys_comp = decomposed["system_prompt"]
+    # 从上游 PromptDecomposer 节点读取拆解结果
+    decomposed = state.get("decomposed")
+    if not decomposed:
+        logger.warning("[ContextAssemble] 未收到 decomposed 数据，降级为原始透传")
+        _log_node_end(state, "ContextAssemble", t0, "降级透传: 缺少 decomposed")
+        return {
+            **state,
+            "messages_list": messages_list,
+            "optimized_system": "",
+            "blocks": [],
+            "working_memory_text": "",
+        }
 
-        # 2. 提取用户信息
-        has_user_prefix = sys_comp.get("has_user_prefix", True)
+    try:
+        sys_comp = decomposed["system_prompt"]
+        has_user_prefix = state.get("has_user_prefix", True)
         user_name = state.get("user_name", "")
 
-        # 3. 从 state 读取意图解析结果（已在 InputReceive 节点中提前执行）
+        # 从 decomposed 读取对话历史
         dialogue = decomposed.get("dialogue", {})
         recent_rounds = dialogue.get("recent_rounds", [])
         last_input = dialogue.get("last_user_input", "")
@@ -75,8 +73,12 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                 f"type={intent_result.input_type}, confidence={intent_result.confidence:.2f}"
             )
 
-        # 4. 区块组装
-        original_system = decomposed["raw"]["system_content"]
+        # 读取重试策略（由 RetryStrategy 节点产出）
+        retry_strategy = state.get("retry_strategy", {})
+        extra_constraints = retry_strategy.get("inject_constraints", [])
+        extra_output_spec = retry_strategy.get("inject_output_spec", [])
+
+        original_system = state.get("original_system", "")
         blocks = []
 
         # --- [MAIN_PROMPT] ---
@@ -107,10 +109,19 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         blocks.append(protocol_block)
 
         # --- [CONSTRAINTS] ---
-        constraints_block = f"""[CONSTRAINTS]
-- LLM 角色声明：你是旁白/NPC扮演者，禁止替 {user_name or '用户'} 生成任何行动或台词
-- 负向指令：禁止生成臀腿腰胸等垃圾小说描写；禁止推进剧情
-- 输出格式：环境描写 + NPC 反应 + {user_name or '用户'} 行动空间"""
+        constraints_lines = [
+            "[CONSTRAINTS]",
+            f"- LLM 角色声明：你是旁白/NPC扮演者，禁止替 {user_name or '用户'} 生成任何行动或台词",
+            "- 负向指令：禁止生成臀腿腰胸等垃圾小说描写；禁止推进剧情",
+            f"- 输出格式：环境描写 + NPC 反应 + {user_name or '用户'} 行动空间",
+        ]
+        # 追加重试策略中的额外约束
+        if extra_constraints:
+            constraints_lines.append("")
+            constraints_lines.append("# 重试追加约束（因上一轮未通过质检）")
+            for ec in extra_constraints:
+                constraints_lines.append(f"- {ec}")
+        constraints_block = "\n".join(constraints_lines)
         blocks.append(constraints_block)
 
         # --- [CHARACTER_CARD] ---
@@ -209,37 +220,46 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             blocks.append(f"[WORLD_CONTEXT]\n{sys_comp['world_book'].strip()}")
 
         # --- [OUTPUT_SPEC] ---
-        output_spec_block = """[OUTPUT_SPEC]
-- 长度：400-600 字
-- 结构：环境描写(30%) + NPC内心/对话(40%) + 留给user的行动空间(30%)
-- 标记规范：
-  "对话内容"（双引号 = 角色台词）
-  **动作描写**（星号 = 角色动作/表情）
-  （心理活动）（小括号 = 角色内心独白）
-- 禁止：替 user 做决定、推进剧情、OOC
-
-# 输出格式示例（必须严格模仿此格式）
-你的输出格式应如下例：
-
-阳光透过女子学校的铁艺大门，在地面投下斑驳的纹路。秋天的银杏叶被风卷起，在门口的喷泉边打转。
-
-几个正抱着课本路过的女生停下脚步，目光警惕地打量着门口这位不速之客。
-
-校门口的石狮静默矗立，等待着这位闯入者迈出第一步。
-
-注意：
-- 每段之间必须空一行
-- 每段是一个独立的画面
-- 段落长度应错落有致，不要每段等长
-
-# 输出前自我校验（COT）
-在生成最终回复前，请按以下步骤逐项检查：
-1. 这段回复中是否有替 user 生成行动或台词？→ 如果有，删除对应部分
-2. 这段回复是否推进了主线剧情？→ 如果是，改为环境描写或NPC反应
-3. 这段回复是否符合角色设定和当前场景？→ 如果否，重新调整
-4. 标记使用是否正确（台词用\", 动作用**, 心理用()）？→ 如果否，修正
-5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展
-6. 回复格式是否与上述示例一致（每段空行分隔、每段一个独立画面）？→ 如果否，重新分段"""
+        output_spec_lines = [
+            "[OUTPUT_SPEC]",
+            "- 长度：400-600 字",
+            "- 结构：环境描写(30%) + NPC内心/对话(40%) + 留给user的行动空间(30%)",
+            "- 标记规范：",
+            '  "对话内容"（双引号 = 角色台词）',
+            "  **动作描写**（星号 = 角色动作/表情）",
+            "  （心理活动）（小括号 = 角色内心独白）",
+            "- 禁止：替 user 做决定、推进剧情、OOC",
+            "",
+            "# 输出格式示例（必须严格模仿此格式）",
+            "你的输出格式应如下例：",
+            "",
+            "阳光透过女子学校的铁艺大门，在地面投下斑驳的纹路。秋天的银杏叶被风卷起，在门口的喷泉边打转。",
+            "",
+            "几个正抱着课本路过的女生停下脚步，目光警惕地打量着门口这位不速之客。",
+            "",
+            "校门口的石狮静默矗立，等待着这位闯入者迈出第一步。",
+            "",
+            "注意：",
+            "- 每段之间必须空一行",
+            "- 每段是一个独立的画面",
+            "- 段落长度应错落有致，不要每段等长",
+            "",
+            "# 输出前自我校验（COT）",
+            "在生成最终回复前，请按以下步骤逐项检查：",
+            "1. 这段回复中是否有替 user 生成行动或台词？→ 如果有，删除对应部分",
+            "2. 这段回复是否推进了主线剧情？→ 如果是，改为环境描写或NPC反应",
+            "3. 这段回复是否符合角色设定和当前场景？→ 如果否，重新调整",
+            '4. 标记使用是否正确（台词用\", 动作用**, 心理用()）？→ 如果否，修正',
+            "5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展",
+            "6. 回复格式是否与上述示例一致（每段空行分隔、每段一个独立画面）？→ 如果否，重新分段",
+        ]
+        # 追加重试策略中的额外输出规范
+        if extra_output_spec:
+            output_spec_lines.append("")
+            output_spec_lines.append("# 重试追加输出规范（因上一轮未通过质检）")
+            for eo in extra_output_spec:
+                output_spec_lines.append(f"- {eo}")
+        output_spec_block = "\n".join(output_spec_lines)
         blocks.append(output_spec_block)
 
         optimized_system = "\n\n".join(blocks)

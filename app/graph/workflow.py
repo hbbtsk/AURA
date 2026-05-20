@@ -1,27 +1,29 @@
-import time
 """
-AURA LangGraph 工作流 — 9 显式节点 + 6 并行子任务
+AURA LangGraph 工作流 — 图结构真实化重构 v0.9.0
 
 设计原则：
-- 每个节点只调用已有业务代码，不修改原有逻辑
-- 原有 completions.py 中的 Prompt 编译 / RAG / LLM 调用逻辑，
-  在 ContextAssemble 节点中完整保留（复制粘贴，不抽取）
-- 当前为 v0.8.2 骨架：mock 节点直接返回空值，真实逻辑后续填充
-- 质检失败后通过条件边自动重试 LLMGenerate
+- 并行子任务注册为 LangGraph 真实节点（非 Python 包装器）
+- Prompt 拆解从 ContextAssemble 剥离为独立节点
+- 质检失败回退到 RetryStrategy → ContextAssemble → LLMGenerate（精准回退）
+- 每个节点职责单一，接口契约统一
 
-节点清单（10个显式节点 + 6个并行子任务）：
-1. InputReceive         → 收输入，解析请求
-2. ParallelPreparation  → 并行：EntityExtract + EmotionAnalyze + MemoryRetrieve + StateManager + StyleInjection + ModelDialectCompiler
-3. ContextAssemble      → Prompt 区块化重组（已真实化）
-4. LLMGenerate          → LLM 生成（已真实化，非流式）
-5. FormatGuard          → 格式质检（mock，默认通过）
-6. OOCCheck             → 人设质检（mock，默认通过）
-7. ContentFilter        → 内容质检（mock，默认通过）
-8. OutputReturn         → 构建响应返回
-9. MemoryExtract        → 保存对话 + 触发总结（已真实化）
+节点清单（12 个显式节点）：
+1. InputReceive         → 收输入，解析请求 + 意图标签
+2. PromptDecomposer     → 拆解 TAVO 原始 Prompt 为结构化组件
+3. EntityExtract        → 从对话中抽取角色/实体（预留）
+4. EmotionAnalyze       → 分析用户输入的情绪倾向（预留）
+5. MemoryRetrieve       → FAISS 向量检索 + 结构化感知匹配 Top-K
+6. StateManager         → 维护角色状态 / 时间线 / dynamic_state
+7. StyleInjection       → 注入文风控制指令（预留）
+8. ModelDialectCompiler → 模型方言编译（预留，适配不同 LLM 特性）
+9. ContextAssemble      → 9 区块 Prompt 组装（核心编译逻辑）
+10. LLMGenerate         → LLM 生成（已真实化，非流式）
+11. ParallelQualityCheck→ 并行执行 FormatGuard + OOCCheck + ContentFilter
+12. RetryStrategy       → 根据失败原因生成重试策略补丁
+13. OutputReturn        → 构建响应返回
+14. MemoryExtract       → 保存对话 + 触发总结（已真实化）
 """
 
-import asyncio
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -29,85 +31,39 @@ from app.graph.state import AgentState
 from app.utils import get_logger
 
 from app.graph.nodes import (
-    # --- 输入层：接收 & 理解用户输入 ---
-    input_receive_node,             # 接收 TAVO 请求，提取用户名、解析意图标签
-    entity_extract_node,            # 从对话中抽取角色/实体（预留）
-    emotion_analyze_node,           # 分析用户输入的情绪倾向（预留）
+    # --- 输入层 ---
+    input_receive_node,             # 接收 TAVO 请求
+    prompt_decomposer_node,         # Prompt 拆解为结构化组件
 
-    # --- 记忆层：记忆检索 ---
-    memory_retrieve_node,           # FAISS 向量检索 + 结构化感知匹配 Top-K
+    # --- 并行准备层（LangGraph 真实节点）---
+    entity_extract_node,            # 实体抽取（预留）
+    emotion_analyze_node,           # 情绪分析（预留）
+    memory_retrieve_node,           # 记忆检索
+    state_manager_node,             # 状态管理（预留）
+    style_injection_node,           # 文风注入（预留）
+    model_dialect_compiler_node,    # 模型方言编译（预留）
 
-    # --- 状态 & 风格层：角色状态维护 & Prompt 编译 ---
-    state_manager_node,             # 维护角色状态 / 时间线 / dynamic_state
-    style_injection_node,           # 注入文风控制指令（预留）
-    model_dialect_compiler_node,    # 模型方言编译（预留，适配不同 LLM 特性）
-    context_assemble_node,          # 9 区块 Prompt 组装（核心编译逻辑）
+    # --- 编译层 ---
+    context_assemble_node,          # 9 区块 Prompt 组装
 
-    # --- LLM 生成层：调用大模型 ---
-    llm_generate_node,              # 调用 LLM 后端生成回复（httpx 非流式）
+    # --- LLM 生成层 ---
+    llm_generate_node,              # LLM 生成
 
-    # --- 质检层：多级内容过滤（并行） ---
-    parallel_quality_check_node,    # 并行执行 FormatGuard + OOCCheck + ContentFilter
+    # --- 质检层 ---
+    parallel_quality_check_node,    # 并行质检
 
-    # --- 输出层：返回 & 记忆固化 ---
-    output_return_node,             # 组装最终响应，写入 state["response"]
-    memory_extract_node,            # 提取本轮对话要点，写入 FAISS + SQLite
+    # --- 重试策略层 ---
+    retry_strategy_node,            # 重试策略生成
 
-    # --- 条件边：质检失败时重试 ---
-    should_retry_after_check,       # 判断是否需要回退到 ModelDialectCompiler 重试
+    # --- 输出层 ---
+    output_return_node,             # 响应构建
+    memory_extract_node,            # 记忆固化
+
+    # --- 条件边 ---
+    should_retry_after_check,       # 质检失败判断
 )
 
 logger = get_logger("aura-graph")
-
-
-# ================================================================
-# 并行准备节点：生成前所有独立任务并行执行
-# ================================================================
-async def parallel_preparation_node(state: AgentState) -> AgentState:
-    """
-    并行执行生成前的所有准备节点。
-
-    这些节点之间无依赖，各自读写 state 中不同的 key，
-    因此可以并行执行，减少总延迟。
-    """
-    t0 = time.time()
-
-    # 传入独立拷贝，避免节点间通过可变对象互相干扰
-    base_state = dict(state)
-    base_state.setdefault("node_logs", [])
-
-    tasks = [
-        entity_extract_node(base_state),
-        emotion_analyze_node(base_state),
-        memory_retrieve_node(base_state),
-        state_manager_node(base_state),
-        style_injection_node(base_state),
-        model_dialect_compiler_node(base_state),
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    merged = dict(state)
-    for result in results:
-        if isinstance(result, Exception):
-            logger.warning(f"[ParallelPreparation] 子任务失败: {result}")
-            continue
-        # 合并各节点返回的字段（排除 node_logs，由本节点统一记录）
-        for key, value in result.items():
-            if key != "node_logs":
-                merged[key] = value
-
-    # 统一记录并行节点耗时
-    elapsed = (time.time() - t0) * 1000
-    logs = merged.get("node_logs", [])
-    logs.append({
-        "node": "ParallelPreparation",
-        "elapsed_ms": round(elapsed, 1),
-        "summary": "entity+emotion+memory+state+style+dialect 并行完成",
-    })
-    merged["node_logs"] = logs
-
-    logger.info(f"[ParallelPreparation] 并行准备完成 | 耗时: {elapsed:.1f}ms")
-    return merged
 
 
 # ================================================================
@@ -118,39 +74,77 @@ workflow = StateGraph(AgentState)
 
 # 注册所有节点
 workflow.add_node("input_receive", input_receive_node)
-workflow.add_node("parallel_preparation", parallel_preparation_node)
+workflow.add_node("prompt_decomposer", prompt_decomposer_node)
+workflow.add_node("entity_extract", entity_extract_node)
+workflow.add_node("emotion_analyze", emotion_analyze_node)
+workflow.add_node("memory_retrieve", memory_retrieve_node)
+workflow.add_node("state_manager", state_manager_node)
+workflow.add_node("style_injection", style_injection_node)
+workflow.add_node("model_dialect_compiler", model_dialect_compiler_node)
 workflow.add_node("context_assemble", context_assemble_node)
 workflow.add_node("llm_generate", llm_generate_node)
 workflow.add_node("parallel_quality_check", parallel_quality_check_node)
+workflow.add_node("retry_strategy", retry_strategy_node)
 workflow.add_node("output_return", output_return_node)
 workflow.add_node("memory_extract", memory_extract_node)
 
 # 设置入口
 workflow.set_entry_point("input_receive")
 
-# 主链路：InputReceive → 并行准备 → ContextAssemble → LLMGenerate → 质检链 → Output → MemoryExtract → END
-workflow.add_edge("input_receive", "parallel_preparation")
-workflow.add_edge("parallel_preparation", "context_assemble")
+# ================================================================
+# 主链路
+# ================================================================
+
+# 输入层
+workflow.add_edge("input_receive", "prompt_decomposer")
+
+# 并行准备层：从 PromptDecomposer 分叉到 6 个并行子任务
+workflow.add_edge("prompt_decomposer", "entity_extract")
+workflow.add_edge("prompt_decomposer", "emotion_analyze")
+workflow.add_edge("prompt_decomposer", "memory_retrieve")
+workflow.add_edge("prompt_decomposer", "state_manager")
+workflow.add_edge("prompt_decomposer", "style_injection")
+workflow.add_edge("prompt_decomposer", "model_dialect_compiler")
+
+# 编译层：6 个并行子任务完成后汇入 ContextAssemble
+workflow.add_edge("entity_extract", "context_assemble")
+workflow.add_edge("emotion_analyze", "context_assemble")
+workflow.add_edge("memory_retrieve", "context_assemble")
+workflow.add_edge("state_manager", "context_assemble")
+workflow.add_edge("style_injection", "context_assemble")
+workflow.add_edge("model_dialect_compiler", "context_assemble")
+
+# 生成层
 workflow.add_edge("context_assemble", "llm_generate")
 workflow.add_edge("llm_generate", "parallel_quality_check")
 
-# 条件边：并行质检后 → 通过则 OutputReturn，不通过则回退到并行准备重试
+# ================================================================
+# 条件边：质检 → 通过则 OutputReturn，不通过则 RetryStrategy → 重新编译 → 重新生成
+# ================================================================
 workflow.add_conditional_edges(
     "parallel_quality_check",
     should_retry_after_check,
     {
         "output_return": "output_return",
-        "retry": "parallel_preparation",
+        "retry_strategy": "retry_strategy",
     },
 )
 
-# OutputReturn → MemoryExtract → END
+# 重试链路：RetryStrategy → ContextAssemble → LLMGenerate → 再次质检
+workflow.add_edge("retry_strategy", "context_assemble")
+# context_assemble → llm_generate 已在主链路中注册，无需重复
+
+# ================================================================
+# 输出层
+# ================================================================
 workflow.add_edge("output_return", "memory_extract")
 workflow.add_edge("memory_extract", END)
 
 # 编译
-# checkpointer: 内存级别状态持久化（开发用），生产环境可换 RedisSaver
 memory_saver = MemorySaver()
 aura_workflow = workflow.compile(checkpointer=memory_saver)
 
-logger.info("[LangGraph] AURA 工作流编译完成 | 显式节点: 7 | 并行子任务: 9 | checkpointer: MemorySaver")
+logger.info(
+    "[LangGraph] AURA 工作流编译完成 | "
+    "显式节点: 14 | 并行子任务: 6（图上真实节点）| 条件边: 1 | checkpointer: MemorySaver"
+)

@@ -41,16 +41,6 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
 
 
 # ================================================================
-# Node 4: MemoryDecision
-# ================================================================
-async def memory_decision_node(state: "AgentState") -> "AgentState":
-    """记忆决策：是否查询记忆（mock，始终 true）"""
-    t0 = _log_node_start(state, "MemoryDecision")
-    _log_node_end(state, "MemoryDecision", t0, "决策: 查询记忆")
-    return state
-
-
-# ================================================================
 # Node 5: MemoryRetrieve
 # ================================================================
 async def memory_retrieve_node(state: "AgentState") -> "AgentState":

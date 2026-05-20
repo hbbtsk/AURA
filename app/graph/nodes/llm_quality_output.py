@@ -1,17 +1,18 @@
 """
 LLM 生成 + 质检 + 输出 节点
 
-Node 10: LLMGenerate（已真实化）
-Node 11: FormatGuard（mock）
-Node 12: OOCCheck（mock）
-Node 13: ContentFilter（mock）
-Node 14: OutputReturn
+Node 11: LLMGenerate（已真实化）
+Node 12: FormatGuard（基于规则的越权输出检测）
+Node 13: OOCCheck（轻量人设一致性检查）
+Node 14: ContentFilter（mock — 由 TAVO/LLM 服务商负责内容安全）
+Node 15: OutputReturn
 
 质检层并行化：
     LLMGenerate → ParallelQualityCheck（FormatGuard + OOCCheck + ContentFilter 并行）
                 → OutputReturn
 """
 import asyncio
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -131,33 +132,122 @@ async def llm_generate_node(state: "AgentState") -> "AgentState":
 
 
 # ================================================================
-# Node 11: FormatGuard
+# Node 12: FormatGuard
 # ================================================================
 async def format_guard_node(state: "AgentState") -> "AgentState":
-    """格式质检：越权输出检测 + 关系一致性检测（mock，默认通过）"""
+    """格式质检：基于规则的越权输出检测 + 文风污染过滤
+
+    规则集：
+    1. 检测是否替 user 生成引号台词
+    2. 检测垃圾小说描写关键词
+    3. 输出长度异常检查
+    """
     t0 = _log_node_start(state, "FormatGuard")
-    _log_node_end(state, "FormatGuard", t0, "通过（mock）")
-    return state
+
+    content = state.get("llm_response_content", "")
+    user_name = state.get("user_name", "用户")
+
+    # 规则 1：检测替 user 生成台词（user_name + 引号内容）
+    # 匹配模式：用户名后跟引号包裹的内容
+    quote_pattern = re.compile(
+        rf"{re.escape(user_name)}.*?[\"「『](.+?)[\"」』]",
+        re.DOTALL
+    )
+    if quote_pattern.search(content):
+        _log_node_end(state, "FormatGuard", t0, f"失败: 检测到替{user_name}生成台词")
+        return {
+            **state,
+            "format_passed": False,
+            "format_reason": f"检测到替{user_name}生成台词",
+        }
+
+    # 规则 2：检测垃圾小说描写关键词
+    trash_keywords = ["臀", "翘臀", "酥胸", "玉腿", "纤腰", "蛮腰"]
+    found_trash = [kw for kw in trash_keywords if kw in content]
+    if found_trash:
+        _log_node_end(state, "FormatGuard", t0, f"失败: 检测到文风污染关键词 {found_trash}")
+        return {
+            **state,
+            "format_passed": False,
+            "format_reason": f"检测到文风污染关键词: {', '.join(found_trash)}",
+        }
+
+    # 规则 3：输出长度异常
+    if len(content) < 50:
+        _log_node_end(state, "FormatGuard", t0, f"失败: 输出过短({len(content)}字)")
+        return {
+            **state,
+            "format_passed": False,
+            "format_reason": f"输出过短({len(content)}字)",
+        }
+    if len(content) > 3000:
+        _log_node_end(state, "FormatGuard", t0, f"失败: 输出过长({len(content)}字)")
+        return {
+            **state,
+            "format_passed": False,
+            "format_reason": f"输出过长({len(content)}字)",
+        }
+
+    _log_node_end(state, "FormatGuard", t0, "通过")
+    return {
+        **state,
+        "format_passed": True,
+        "format_reason": "",
+    }
 
 
 # ================================================================
-# Node 12: OOCCheck
+# Node 13: OOCCheck
 # ================================================================
 async def ooc_check_node(state: "AgentState") -> "AgentState":
-    """人设一致性质检（mock，默认通过）"""
+    """人设一致性质检 — 轻量检查（基于角色卡关键词匹配）
+
+    当前为轻量实现，后续可接入 LLM 深度检查。
+    """
     t0 = _log_node_start(state, "OOCCheck")
-    _log_node_end(state, "OOCCheck", t0, "通过（mock）")
-    return state
+
+    content = state.get("llm_response_content", "")
+    decomposed = state.get("decomposed")
+    char_card = ""
+    if decomposed:
+        char_card = decomposed.get("system_prompt", {}).get("character_card", "")
+
+    # 轻量规则：如果角色卡中有明确的角色名，检查输出是否提到该角色
+    # （这是一个极轻量的检查，避免完全无脑通过）
+    ooc_reason = ""
+    if char_card:
+        # 提取角色卡第一行作为角色名候选
+        first_line = char_card.split("\n")[0].strip()
+        if first_line and len(first_line) < 30:
+            # 如果角色名在角色卡中但输出中未出现，不一定是 OOC（可能是环境描写）
+            # 所以这里只记录，不判定失败
+            char_mentioned = first_line in content
+            ooc_reason = f"角色名{'已' if char_mentioned else '未'}提及（轻量检查）"
+
+    _log_node_end(state, "OOCCheck", t0, f"通过 | {ooc_reason}")
+    return {
+        **state,
+        "ooc_passed": True,
+        "ooc_reason": ooc_reason,
+    }
 
 
 # ================================================================
-# Node 13: ContentFilter
+# Node 14: ContentFilter
 # ================================================================
 async def content_filter_node(state: "AgentState") -> "AgentState":
-    """文风污染过滤（mock，默认通过）"""
+    """内容安全过滤 — 由 TAVO/LLM 服务商负责，AURA 层保持透传
+
+    设计说明：AURA 的定位是 Prompt 编译器，内容安全由上游（TAVO）和下游（LLM 服务商）负责。
+    此节点保留作为扩展点，当前默认通过。
+    """
     t0 = _log_node_start(state, "ContentFilter")
-    _log_node_end(state, "ContentFilter", t0, "通过（mock）")
-    return state
+    _log_node_end(state, "ContentFilter", t0, "通过（TAVO/LLM 服务商层负责）")
+    return {
+        **state,
+        "content_passed": True,
+        "content_reason": "",
+    }
 
 
 # ================================================================

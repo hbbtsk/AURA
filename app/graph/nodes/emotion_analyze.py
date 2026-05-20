@@ -36,7 +36,17 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
 
 
 async def emotion_analyze_node(state: "AgentState") -> "AgentState":
-    """情绪走向分析（mock）"""
+    """情绪走向分析（mock — Week 3 真实化）
+
+    当前为占位实现，返回统一接口契约字段，下游节点可安全读取。
+    """
     t0 = _log_node_start(state, "EmotionAnalyze")
-    _log_node_end(state, "EmotionAnalyze", t0, "当前为 mock，情绪=中性")
-    return state
+
+    # TODO: Week 3 接入真实情绪分析模型
+    emotion_analysis = None
+
+    _log_node_end(state, "EmotionAnalyze", t0, "mock | emotion=中性")
+    return {
+        **state,
+        "emotion_analysis": emotion_analysis,
+    }

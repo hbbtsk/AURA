@@ -41,12 +41,19 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
 # Node 6: StateManager
 # ================================================================
 async def state_manager_node(state: "AgentState") -> "AgentState":
-    """状态管理：加载 dynamic_state + 关系图谱渲染（mock）"""
+    """状态管理：加载 dynamic_state + 关系图谱渲染（mock — Week 2 真实化）
+
+    当前为占位实现，返回统一接口契约字段，下游节点可安全读取。
+    """
     t0 = _log_node_start(state, "StateManager")
-    _log_node_end(state, "StateManager", t0, "当前为 mock，CHARACTER_SITUATION=空")
+
+    # TODO: Week 2 从 SQLite 读取真实动态状态
+    character_situation = "（状态管理器尚未实现）"
+
+    _log_node_end(state, "StateManager", t0, "mock | CHARACTER_SITUATION=空")
     return {
         **state,
-        "character_situation": "（状态管理器尚未实现）",
+        "character_situation": character_situation,
     }
 
 
@@ -54,31 +61,38 @@ async def state_manager_node(state: "AgentState") -> "AgentState":
 # Node 7: StyleInjection
 # ================================================================
 async def style_injection_node(state: "AgentState") -> "AgentState":
-    """结构随机化 + mes_example 多样化（mock）"""
+    """结构随机化 + mes_example 多样化（mock — Week 3 真实化）
+
+    当前为占位实现，返回统一接口契约字段，下游节点可安全读取。
+    """
     t0 = _log_node_start(state, "StyleInjection")
-    _log_node_end(state, "StyleInjection", t0, "当前为 mock")
-    return state
+
+    # TODO: Week 3 接入真实文风控制
+    style_injections = None
+
+    _log_node_end(state, "StyleInjection", t0, "mock | 无注入")
+    return {
+        **state,
+        "style_injections": style_injections,
+    }
 
 
 # ================================================================
 # Node 8: ModelDialectCompiler
 # ================================================================
 async def model_dialect_compiler_node(state: "AgentState") -> "AgentState":
-    """模型方言编译器（mock，透传）
+    """模型方言编译器（mock — 适配不同 LLM 后端特性）
 
-    Retry 时的策略调整：
-    - retry_count == 1 → 在 CONTRAINTS 中追加更强约束
-    - retry_count == 2 → 在 OUTPUT_SPEC 中追加逐条自检 COT
+    当前为占位实现，返回统一接口契约字段，下游节点可安全读取。
+    真实的方言编译逻辑（如 DeepSeek reasoning 处理、Gemini 系统提示适配等）将在后续版本实现。
     """
     t0 = _log_node_start(state, "ModelDialectCompiler")
 
-    retry = state.get("retry_count", 0)
-    summary = f"当前为 mock，透传（retry={retry}）"
+    # TODO: 根据 backend 模型特性注入方言适配指令
+    model_dialect_notes = None
 
-    if retry == 1:
-        summary += " | 已追加更强约束（模拟）"
-    elif retry >= 2:
-        summary += " | 已追加 COT 自检（模拟）"
-
-    _log_node_end(state, "ModelDialectCompiler", t0, summary)
-    return state
+    _log_node_end(state, "ModelDialectCompiler", t0, "mock | 无方言适配")
+    return {
+        **state,
+        "model_dialect_notes": model_dialect_notes,
+    }

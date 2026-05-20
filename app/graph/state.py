@@ -51,6 +51,13 @@ class AgentState(TypedDict, total=False):
     character_situation: str               # 渲染后的 [CHARACTER_SITUATION]
 
     # ================================================================
+    # 并行准备子任务层（LangGraph 真实节点产出）
+    # ================================================================
+    emotion_analysis: Optional[str]        # 情绪分析结果（EmotionAnalyze 节点产出）
+    style_injections: Optional[List[str]]  # 文风注入指令（StyleInjection 节点产出）
+    model_dialect_notes: Optional[str]     # 模型方言编译备注（ModelDialectCompiler 节点产出）
+
+    # ================================================================
     # 对话管理层
     # ================================================================
     round_num: int                    # 当前轮次编号
@@ -76,6 +83,7 @@ class AgentState(TypedDict, total=False):
     content_reason: str               # 未通过原因
     retry_count: int                  # 当前重试次数
     max_retries: int                  # 最大重试次数
+    retry_strategy: Dict[str, Any]    # 重试策略补丁（RetryStrategy 节点产出）
 
     # ================================================================
     # 输出层
