@@ -53,46 +53,66 @@ class ChatCompletionResponse(BaseModel):
     aura_debug: Optional[Dict[str, Any]] = None
 
 
-# 模型 → 后端名称映射 (可根据需要扩展)
+# 模型 → 后端名称映射
 BACKEND_MAP = {
+    # DeepSeek
     "deepseek-v4-flash": "deepseek",
     "deepseek-v4-pro": "deepseek",
-    # 其他模型可在此添加
+    "deepseek-v4": "deepseek",
+    "deepseek": "deepseek",
+    # Kimi
+    "kimi-k2.6": "kimi",
+    "kimi-k2-turbo-preview": "kimi",
+    "kimi": "kimi",
+    # Gemini
+    "gemini-2.0-flash": "gemini",
+    "gemini": "gemini",
 }
 
 
-def get_backend_for_model(model: str) -> str:
-    """根据模型名称返回对应的后端标识"""
+def get_backend_for_model(model: str) -> tuple[str, str]:
+    """根据模型名称返回 (后端标识, 具体型号)
+
+    例如:
+        "deepseek-v4-pro"  -> ("deepseek", "deepseek-v4-pro")
+        "kimi-k2.6"        -> ("kimi", "kimi-k2.6")
+        "gemini"           -> ("gemini", "gemini")
+        "unknown-model"    -> (settings.default_llm, "unknown-model")
+    """
     if model in BACKEND_MAP:
-        return BACKEND_MAP[model]
-    # 后备：如果模型名以 deepseek 开头，使用 deepseek 后端
-    if model.startswith("deepseek"):
-        return "deepseek"
-    # 否则使用默认后端
-    return settings.default_llm
+        backend = BACKEND_MAP[model]
+        return backend, model
+    # 前缀匹配兜底
+    for prefix, backend in [("deepseek", "deepseek"), ("kimi", "kimi"), ("gemini", "gemini")]:
+        if model.startswith(prefix):
+            return backend, model
+    # 否则使用默认后端，型号透传（由下游决定是否 fallback 到默认型号）
+    return settings.default_llm, model
 
 
 # --- TAVO兼容接口 ---
 @router.get("/models")
 async def get_models():
-    """获取可用模型列表（TAVO兼容性）"""
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": "deepseek-v4-flash",
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "deepseek"
-            },
-            {
-                "id": "deepseek-v4-pro",
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "deepseek"
-            }
-        ]
-    }
+    """获取可用模型列表（TAVO兼容性）
+
+    仅返回 .env 中已配置 API Key 的模型。
+    """
+    from app.core.config import validate_llm_config
+
+    config_status = validate_llm_config()
+
+    all_models = [
+        {"id": "deepseek-v4-flash", "object": "model", "created": 1700000000, "owned_by": "deepseek"},
+        {"id": "deepseek-v4-pro", "object": "model", "created": 1700000000, "owned_by": "deepseek"},
+        {"id": "kimi-k2.6", "object": "model", "created": 1700000000, "owned_by": "kimi"},
+        {"id": "kimi-k2-turbo-preview", "object": "model", "created": 1700000000, "owned_by": "kimi"},
+        {"id": "gemini-2.0-flash", "object": "model", "created": 1700000000, "owned_by": "gemini"},
+    ]
+
+    # 过滤：只返回已配置 API Key 后端的模型
+    available = [m for m in all_models if config_status.get(m["owned_by"], False)]
+
+    return {"object": "list", "data": available}
 
 
 # --- 健康检查 ---

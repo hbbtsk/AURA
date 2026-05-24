@@ -82,19 +82,21 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMConfig]:
+def get_llm_config(provider: str = None, scene: str = "main", model_name: str = None) -> Optional[LLMConfig]:
     """
     获取指定LLM后端 + 指定场景的配置
-    
+
     Args:
         provider: LLM 后端名称（deepseek/kimi/gemini），None 则用 default_llm
         scene: 使用场景（main/summary/intent），不同场景有不同的 temperature/max_tokens/timeout
-    
+        model_name: 用户指定的具体型号（如 "deepseek-v4-pro"）。
+                    传入时优先使用，否则 fallback 到 settings 中的默认型号。
+
     Returns:
         LLMConfig 实例，如果配置不完整则返回 None
     """
     provider = provider or settings.default_llm
-    
+
     # 根据场景选择参数
     if scene == "main":
         temperature = settings.llm_main_temperature
@@ -113,7 +115,7 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
         temperature = 0.7
         max_tokens = 2048
         timeout = 30
-    
+
     if provider == "deepseek":
         if not settings.deepseek_api_key:
             logger.warning("[Config] DeepSeek API密钥未配置，返回 None")
@@ -121,7 +123,7 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
         return LLMConfig(
             base_url=settings.deepseek_base_url,
             api_key=settings.deepseek_api_key,
-            model=settings.deepseek_model,
+            model=model_name or settings.deepseek_model,
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
@@ -133,7 +135,7 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
         return LLMConfig(
             base_url=settings.gemini_base_url,
             api_key=settings.gemini_api_key,
-            model=settings.gemini_model,
+            model=model_name or settings.gemini_model,
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
@@ -142,14 +144,15 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
         if not settings.kimi_api_key:
             logger.warning("[Config] Kimi API密钥未配置，返回 None")
             return None
-        # 意图分析场景用快速版（无 reasoning），主对话用标准版
-        model_name = settings.kimi_model
-        if scene == "intent":
-            model_name = "kimi-k2-turbo-preview"
+        # 用户指定型号优先；未指定时使用 settings 默认值
+        actual_model = model_name or settings.kimi_model
+        # 意图分析场景用快速版（无 reasoning），但仅在用户未显式指定型号时切换
+        if scene == "intent" and model_name is None:
+            actual_model = "kimi-k2-turbo-preview"
         return LLMConfig(
             base_url=settings.kimi_base_url,
             api_key=settings.kimi_api_key,
-            model=model_name,
+            model=actual_model,
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
@@ -162,14 +165,14 @@ def get_llm_config(provider: str = None, scene: str = "main") -> Optional[LLMCon
 def validate_llm_config() -> Dict[str, bool]:
     """验证各LLM后端配置是否完整"""
     results = {}
-    
+
     # 检查DeepSeek
     results["deepseek"] = bool(settings.deepseek_api_key)
-    
+
     # 检查Kimi
     results["kimi"] = bool(settings.kimi_api_key)
-    
-    # 检查Gemini（暂时禁用）
-    results["gemini"] = False  # bool(settings.gemini_api_key)
-    
+
+    # 检查Gemini
+    results["gemini"] = bool(settings.gemini_api_key)
+
     return results

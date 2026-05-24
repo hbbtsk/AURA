@@ -56,7 +56,8 @@ async def llm_generate_node(state: "AgentState") -> "AgentState":
     t0 = _log_node_start(state, "LLMGenerate")
 
     backend = state.get("backend", settings.default_llm)
-    llm_config = get_llm_config(backend, scene="main")
+    model_name = state.get("model")
+    llm_config = get_llm_config(backend, scene="main", model_name=model_name)
     if not llm_config or not llm_config.api_key:
         _log_node_end(state, "LLMGenerate", t0, "LLM 配置缺失")
         return {

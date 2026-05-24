@@ -93,10 +93,10 @@ async def chat_completion(
         raise HTTPException(status_code=400, detail="model 字段不能为空")
 
     # ============================================================
-    # 2. 获取后端配置
+    # 2. 获取后端配置（支持后端切换 + 同后端型号切换）
     # ============================================================
-    backend = get_backend_for_model(request.model)
-    llm_config = get_llm_config(backend, scene="main")
+    backend, actual_model = get_backend_for_model(request.model)
+    llm_config = get_llm_config(backend, scene="main", model_name=actual_model)
     if not llm_config or not llm_config.api_key:
         raise HTTPException(status_code=503, detail=f"后端 {backend} 未正确配置")
 
