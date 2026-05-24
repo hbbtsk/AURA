@@ -29,12 +29,10 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
         "elapsed_ms": round(elapsed, 1),
         "summary": summary,
     }
-    logs = state.get("node_logs", [])
-    logs.append(log_entry)
     logger.info(
         f"[LangGraph→节点] {node_name} | 结束 | 耗时: {elapsed:.1f}ms | {summary}"
     )
-    return {"node_logs": logs}
+    return {"node_logs": [log_entry]}
 
 
 # ================================================================
@@ -50,10 +48,10 @@ async def state_manager_node(state: "AgentState") -> "AgentState":
     # TODO: Week 2 从 SQLite 读取真实动态状态
     character_situation = "（状态管理器尚未实现）"
 
-    _log_node_end(state, "StateManager", t0, "mock | CHARACTER_SITUATION=空")
+    log_update = _log_node_end(state, "StateManager", t0, "mock | CHARACTER_SITUATION=空")
     return {
-        **state,
         "character_situation": character_situation,
+        **log_update,
     }
 
 
@@ -70,10 +68,10 @@ async def style_injection_node(state: "AgentState") -> "AgentState":
     # TODO: Week 3 接入真实文风控制
     style_injections = None
 
-    _log_node_end(state, "StyleInjection", t0, "mock | 无注入")
+    log_update = _log_node_end(state, "StyleInjection", t0, "mock | 无注入")
     return {
-        **state,
         "style_injections": style_injections,
+        **log_update,
     }
 
 
@@ -91,8 +89,8 @@ async def model_dialect_compiler_node(state: "AgentState") -> "AgentState":
     # TODO: 根据 backend 模型特性注入方言适配指令
     model_dialect_notes = None
 
-    _log_node_end(state, "ModelDialectCompiler", t0, "mock | 无方言适配")
+    log_update = _log_node_end(state, "ModelDialectCompiler", t0, "mock | 无方言适配")
     return {
-        **state,
         "model_dialect_notes": model_dialect_notes,
+        **log_update,
     }

@@ -8,7 +8,8 @@ AURA AgentState — LangGraph 统一状态容器
 - structlog 可逐节点打印状态摘要
 """
 
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Annotated
+import operator
 from app.memory.models import IntentResult
 
 
@@ -94,5 +95,5 @@ class AgentState(TypedDict, total=False):
     # ================================================================
     # 调试 & 可观测性
     # ================================================================
-    node_logs: List[Dict[str, Any]]   # 节点执行日志（名称、耗时、状态摘要）
+    node_logs: Annotated[List[Dict[str, Any]], operator.add]  # 节点执行日志，支持并发节点追加
     start_time: float                 # 请求开始时间戳

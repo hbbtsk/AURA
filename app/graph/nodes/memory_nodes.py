@@ -32,12 +32,10 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
         "elapsed_ms": round(elapsed, 1),
         "summary": summary,
     }
-    logs = state.get("node_logs", [])
-    logs.append(log_entry)
     logger.info(
         f"[LangGraph→节点] {node_name} | 结束 | 耗时: {elapsed:.1f}ms | {summary}"
     )
-    return {"node_logs": logs}
+    return {"node_logs": [log_entry]}
 
 
 # ================================================================
@@ -67,10 +65,10 @@ async def memory_retrieve_node(state: "AgentState") -> "AgentState":
         rag_memories = []
         summary = f"RAG 失败: {e}"
 
-    _log_node_end(state, "MemoryRetrieve", t0, summary)
+    log_update = _log_node_end(state, "MemoryRetrieve", t0, summary)
     return {
-        **state,
         "retrieved_memories": rag_memories,
+        **log_update,
     }
 
 
@@ -122,5 +120,5 @@ async def memory_extract_node(state: "AgentState") -> "AgentState":
         logger.warning(f"[MemoryExtract] 保存失败（不影响返回）: {e}")
         summary_parts.append(f"失败: {e}")
 
-    _log_node_end(state, "MemoryExtract", t0, ", ".join(summary_parts) or "无操作")
-    return state
+    log_update = _log_node_end(state, "MemoryExtract", t0, ", ".join(summary_parts) or "无操作")
+    return log_update

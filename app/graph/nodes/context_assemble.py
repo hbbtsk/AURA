@@ -28,12 +28,10 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
         "elapsed_ms": round(elapsed, 1),
         "summary": summary,
     }
-    logs = state.get("node_logs", [])
-    logs.append(log_entry)
     logger.info(
         f"[LangGraph→节点] {node_name} | 结束 | 耗时: {elapsed:.1f}ms | {summary}"
     )
-    return {"node_logs": logs}
+    return {"node_logs": [log_entry]}
 
 
 async def context_assemble_node(state: "AgentState") -> "AgentState":
@@ -302,9 +300,8 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         working_memory_text = ""
         summary = f"降级透传: {e}"
 
-    _log_node_end(state, "ContextAssemble", t0, summary)
+    log_update = _log_node_end(state, "ContextAssemble", t0, summary)
     return {
-        **state,
         "decomposed": decomposed if 'decomposed' in locals() else None,
         "original_system": original_system if 'original_system' in locals() else "",
         "blocks": blocks if 'blocks' in locals() else [],
@@ -313,4 +310,5 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         "optimized_system": optimized_system if 'optimized_system' in locals() else "",
         "messages_list": messages_list,
         "has_user_prefix": has_user_prefix if 'has_user_prefix' in locals() else True,
+        **log_update,
     }

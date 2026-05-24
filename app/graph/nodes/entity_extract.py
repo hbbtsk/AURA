@@ -27,12 +27,10 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
         "elapsed_ms": round(elapsed, 1),
         "summary": summary,
     }
-    logs = state.get("node_logs", [])
-    logs.append(log_entry)
     logger.info(
         f"[LangGraph→节点] {node_name} | 结束 | 耗时: {elapsed:.1f}ms | {summary}"
     )
-    return {"node_logs": logs}
+    return {"node_logs": [log_entry]}
 
 
 async def entity_extract_node(state: "AgentState") -> "AgentState":
@@ -50,8 +48,8 @@ async def entity_extract_node(state: "AgentState") -> "AgentState":
             if first_line:
                 active_entities.append(first_line)
 
-    _log_node_end(state, "EntityExtract", t0, f"活跃实体: {active_entities}")
+    log_update = _log_node_end(state, "EntityExtract", t0, f"活跃实体: {active_entities}")
     return {
-        **state,
         "active_entity_ids": active_entities,
+        **log_update,
     }

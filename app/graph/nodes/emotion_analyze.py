@@ -27,12 +27,10 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
         "elapsed_ms": round(elapsed, 1),
         "summary": summary,
     }
-    logs = state.get("node_logs", [])
-    logs.append(log_entry)
     logger.info(
         f"[LangGraph→节点] {node_name} | 结束 | 耗时: {elapsed:.1f}ms | {summary}"
     )
-    return {"node_logs": logs}
+    return {"node_logs": [log_entry]}
 
 
 async def emotion_analyze_node(state: "AgentState") -> "AgentState":
@@ -45,8 +43,8 @@ async def emotion_analyze_node(state: "AgentState") -> "AgentState":
     # TODO: Week 3 接入真实情绪分析模型
     emotion_analysis = None
 
-    _log_node_end(state, "EmotionAnalyze", t0, "mock | emotion=中性")
+    log_update = _log_node_end(state, "EmotionAnalyze", t0, "mock | emotion=中性")
     return {
-        **state,
         "emotion_analysis": emotion_analysis,
+        **log_update,
     }
