@@ -241,11 +241,11 @@ AURA/
 
 | 阶段 | 重点 | 状态 |
 |------|------|--------|
-| **v0.8.x** | Prompt 编译器 — LangGraph 状态机、三层记忆、质检 | ✅ 稳定 |
-| **v0.9.x** | 世界平台 — 元模型、卡带系统、Director、NPC Agent | 🚧 骨架 |
-| **v0.10.x** | 因果引擎 — Kuzu 图数据库、因果链遍历、CausalRAG | 📋 计划中 |
-| **v0.11.x** | 事件涌现 — EventEngine、PacingEngine、PerturbationEngine | 📋 计划中 |
-| **v0.12.x** | 多 Agent — 并发 NPC LLM 调用、冲突检测、离线模拟 | 📋 计划中 |
+| **v1.0.x** | Prompt 编译器 — LangGraph 状态机、三层记忆、质检 | ✅ 稳定 |
+| **v1.1.x** | 世界平台 — 元模型、卡带系统、Director、NPC Agent | 🚧 骨架 |
+| **v1.2.x** | 因果引擎 — Kuzu 图数据库、因果链遍历、CausalRAG | 📋 计划中 |
+| **v1.3.x** | 事件涌现 — EventEngine、PacingEngine、PerturbationEngine | 📋 计划中 |
+| **v1.4.x** | 多 Agent — 并发 NPC LLM 调用、冲突检测、离线模拟 | 📋 计划中 |
 
 ---
 

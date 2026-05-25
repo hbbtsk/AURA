@@ -44,7 +44,7 @@ python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8000
 
 ```
 AURA 初始化完成
-服务模式: LangGraph 状态机 + 3层记忆 + 意图感知 (v0.9.0)
+服务模式: LangGraph 状态机 + 3层记忆 + 意图感知 (v1.0.0)
 调试模式: 启用
 激活的LLM后端: ['deepseek', 'kimi']
 [AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: 0
@@ -66,7 +66,7 @@ curl http://localhost:8000/health
 {
   "status": "healthy",
   "service": "AURA",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "mode": "dual",
   "world_loaded": false,
   "available_cartridges": ["rwby_beacon"]

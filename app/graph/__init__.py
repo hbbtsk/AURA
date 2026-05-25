@@ -7,7 +7,7 @@ AURA LangGraph 编排层 — 14 节点 Agent 状态机
 3. 支持质检失败后的自动重试（FormatGuard/OOCCheck/ContentFilter）
 4. 跨轮次状态持久化（checkpointer）
 
-版本：v0.8.0
+版本：v1.0.0
 """
 
 from app.graph.workflow import aura_workflow

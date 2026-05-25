@@ -5,7 +5,7 @@ AURA completions API — LangGraph 编排入口
   - /chat/completions 核心处理逻辑（请求验证、AgentState 组装、LangGraph 调用、响应构建）
   - 系统初始化入口 initialize_aura()
 
-v0.8.0 架构：
+v1.0.0 架构：
   1. 接收 TAVO 请求 → 保存 Prompt dump 到本地
   2. 组装 AgentState → 调用 aura_workflow.ainvoke()
   3. LangGraph 15 节点状态机执行：
@@ -57,7 +57,7 @@ async def chat_completion(
     x_tavo_debug: Optional[str] = Header(None, alias="X-Tavo-Debug")
 ):
     """
-    AURA 核心 API — LangGraph 编排入口 (v0.8.0)
+    AURA 核心 API — LangGraph 编排入口 (v1.0.0)
 
     原顺序执行逻辑（Prompt 拆解 → RAG → LLM 调用）已迁移到
     app/graph/workflow.py 的 15 节点状态机中。
@@ -232,7 +232,7 @@ async def world_completion(
     x_tavo_debug: Optional[str] = Header(None, alias="X-Tavo-Debug")
 ):
     """
-    AURA 平台模式 API — 文字冒险入口 (v0.9.0)
+    AURA 平台模式 API — 文字冒险入口 (v1.0.0)
 
     与 /chat/completions（TAVO 兼容模式）并行存在。
     此端点使用 Director + NPC Agent 架构，而非 LangGraph 状态机。
@@ -369,7 +369,7 @@ async def initialize_aura():
     """初始化AURA系统"""
     try:
         logger.info("AURA 初始化完成")
-        logger.info(f"服务模式: LangGraph 状态机 + 3层记忆 + 意图感知 (v0.8.2)")
+        logger.info(f"服务模式: LangGraph 状态机 + 3层记忆 + 意图感知 (v1.0.0)")
         logger.info(f"调试模式: {'启用' if settings.debug_mode else '禁用'}")
 
         # 验证LLM配置
@@ -381,7 +381,7 @@ async def initialize_aura():
         if not active_backends:
             logger.warning("没有配置有效的LLM后端，请检查环境变量")
 
-        # 初始化记忆管理器（v0.6.0）
+        # 初始化记忆管理器
         await memory_manager.initialize()
         mem_count = await memory_manager.get_memory_count()
         logger.info(f"[AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: {mem_count}")

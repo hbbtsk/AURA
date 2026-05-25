@@ -1,5 +1,5 @@
 """
-AURA LangGraph 工作流 — 图结构真实化重构 v0.9.0
+AURA LangGraph 工作流 — 图结构真实化重构 v1.0.0
 
 设计原则：
 - 并行子任务注册为 LangGraph 真实节点（非 Python 包装器）

@@ -198,7 +198,7 @@ example_world.aura/
 
 ## 8. 开发路线图
 
-### Phase 0 — 地基（v0.8.x → v0.9.0）✅ 已完成
+### Phase 0 — 地基（v1.0.x → v1.0.0）✅ 已完成
 
 - [x] LangGraph 14 节点状态机
 - [x] Prompt 拆解 + 9 区块组装
@@ -210,7 +210,7 @@ example_world.aura/
 - [x] Director 骨架 + NPC Agent 骨架
 - [x] 示例卡带：`rwby_beacon`（魏丝 & 鲁比）
 
-### Phase 1 — 图与因果（v0.9.x → v0.10.x）
+### Phase 1 — 图与因果（v1.1.x → v1.2.x）
 
 - [ ] 接入 Kuzu 或 NetworkX 因果图存储
 - [ ] FAISS 纯向量检索替换为 CausalRAG（图遍历 + 向量兜底）
@@ -218,14 +218,14 @@ example_world.aura/
 - [ ] 原子性 EventPatch 应用 + 冲突检测
 - [ ] Deep FormatGuard：WorldRule + 时空一致性检查
 
-### Phase 2 — 涌现与节奏（v0.10.x → v0.11.x）
+### Phase 2 — 涌现与节奏（v1.2.x → v1.3.x）
 
 - [ ] PacingEngine：起承转合四态叙事节奏控制
 - [ ] PerturbationEngine：检测并释放压抑的因果势能
 - [ ] EventScheduler：离线 NPC 自主行为
 - [ ] 多 Agent 并发：所有在场 NPC 并行 LLM 调用
 
-### Phase 3 — 打磨与生态（v0.12.x）
+### Phase 3 — 打磨与生态（v1.4.x）
 
 - [ ] ModelDialectCompiler：单模型 Prompt 优化
 - [ ] 分支世界线：关键选择点存档分叉

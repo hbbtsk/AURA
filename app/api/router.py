@@ -141,7 +141,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "AURA",
-        "version": "0.9.0",
+        "version": "1.0.0",
         "mode": "dual",
         "modes": {
             "tavo": "LangGraph 状态机 + Prompt 编译器（/chat/completions）",

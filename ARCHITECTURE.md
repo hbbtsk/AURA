@@ -1,6 +1,6 @@
 # AURA Architecture
 
-> **Version:** v0.9.0 | **Last Updated:** 2026-05-25
+> **Version:** v1.0.0 | **Last Updated:** 2026-05-25
 
 AURA is a dual-mode AI narrative engine. This document describes the technical architecture of both modes.
 
@@ -333,4 +333,4 @@ AURA/
 | v0.7.0 | 2026-05-10 | 3-layer memory + IntentTagger + intent-aware RAG v2 |
 | v0.8.0 | 2026-05-11 | LangGraph 14-node state machine |
 | v0.8.3 | 2026-05-17 | Module reorganization + file splitting |
-| **v0.9.0** | **2026-05-25** | **Route B: Meta-models, cartridge system, Director, NPC Agent, LLM failover** |
+| **v1.0.0** | **2026-05-25** | **Route B: Meta-models, cartridge system, Director, NPC Agent, LLM failover** |

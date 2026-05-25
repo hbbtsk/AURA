@@ -283,11 +283,11 @@ AURA/
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **v0.8.x** | Prompt Compiler — LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
-| **v0.9.x** | World Platform — Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
-| **v0.10.x** | Causal Engine — Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
-| **v0.11.x** | Event Emergence — EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
-| **v0.12.x** | Multi-Agent — Concurrent NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
+| **v1.0.x** | Prompt Compiler — LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
+| **v1.1.x** | World Platform — Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
+| **v1.2.x** | Causal Engine — Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
+| **v1.3.x** | Event Emergence — EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
+| **v1.4.x** | Multi-Agent — Concurrent NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
 
 ---
 

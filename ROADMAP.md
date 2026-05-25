@@ -198,7 +198,7 @@ example_world.aura/
 
 ## 8. Development Roadmap
 
-### Phase 0 — Foundation (v0.8.x → v0.9.0) ✅ Completed
+### Phase 0 — Foundation (v1.0.x → v1.0.0) ✅ Completed
 
 - [x] LangGraph 14-node state machine
 - [x] Prompt decomposition + 9-block assembly
@@ -210,7 +210,7 @@ example_world.aura/
 - [x] Director skeleton + NPC Agent skeleton
 - [x] Example cartridge: `rwby_beacon` (Weiss & Ruby)
 
-### Phase 1 — Graph & Causality (v0.9.x → v0.10.x)
+### Phase 1 — Graph & Causality (v1.1.x → v1.2.x)
 
 - [ ] Integrate Kuzu or NetworkX for causal graph storage
 - [ ] Replace FAISS pure-vector search with CausalRAG (graph traversal + vector fallback)
@@ -218,14 +218,14 @@ example_world.aura/
 - [ ] Atomic EventPatch application with conflict detection
 - [ ] Deep FormatGuard: WorldRule + spatial consistency checks
 
-### Phase 2 — Emergence & Pacing (v0.10.x → v0.11.x)
+### Phase 2 — Emergence & Pacing (v1.2.x → v1.3.x)
 
 - [ ] PacingEngine: four-state narrative rhythm control
 - [ ] PerturbationEngine: detect and release suppressed causal potential
 - [ ] EventScheduler: offline NPC autonomous behavior
 - [ ] Multi-Agent concurrency: parallel LLM calls for all active NPCs
 
-### Phase 3 — Polish & Ecosystem (v0.12.x)
+### Phase 3 — Polish & Ecosystem (v1.4.x)
 
 - [ ] ModelDialectCompiler: per-model prompt optimization
 - [ ] Branching timelines: save checkpoints at key decision points

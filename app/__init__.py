@@ -9,4 +9,4 @@ AURA — Agentic Unified Roleplay Assistant
 
 from app.utils import setup_logging, get_logger, suppress_library_logging
 
-__version__ = "0.8.2"
+__version__ = "1.0.0"

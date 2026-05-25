@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AURA",
     description="Agentic Unified Roleplay Assistant - Tavo→AURA→LLM桥梁",
-    version="0.8.2",
+    version="1.0.0",
     lifespan=lifespan
 )
 
@@ -50,7 +50,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "AURA",
-        "version": "0.8.0",
+        "version": "1.0.0",
         "mode": "langgraph-state-machine",
         "debug": settings.debug_mode
     }
