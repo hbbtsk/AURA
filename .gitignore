@@ -26,6 +26,7 @@ faiss_meta.json
 # IDE
 .vscode/
 .idea/
+.kilo/
 
 # 系统
 .DS_Store
