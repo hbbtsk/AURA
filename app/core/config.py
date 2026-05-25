@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     # ========== 场景参数：主对话（main） ==========
     llm_main_temperature: float = 0.7
     llm_main_max_tokens: int = 4096
-    llm_main_timeout: int = 60
+    llm_main_timeout: int = 60          # 总超时（HTTP 连接+读取）
+    llm_main_ttfb_timeout: int = 3      # 首 token 超时（秒）：超过此时间未收到任何响应则触发 fallback
+    llm_main_fallback_provider: str = "kimi"  # 主模型 ttfb 超时后的备用后端
 
     # ========== 场景参数：记忆总结（summary） ==========
     llm_summary_temperature: float = 0.3

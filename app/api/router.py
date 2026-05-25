@@ -53,6 +53,19 @@ class ChatCompletionResponse(BaseModel):
     aura_debug: Optional[Dict[str, Any]] = None
 
 
+# --- 平台模式请求模型 ---
+class WorldCompletionRequest(BaseModel):
+    """AURA 平台模式请求 — 文字冒险入口"""
+    message: str                        # 玩家输入
+    cartridge: Optional[str] = None     # 卡带名称（如 "rwby_beacon"），未加载时必填
+    model: str = "deepseek-v4-flash"
+    temperature: Optional[float] = 0.7
+    stream: Optional[bool] = False
+    max_tokens: Optional[int] = None
+    player_entity_id: Optional[str] = "player"  # 玩家在世界中的实体 ID
+    location_id: Optional[str] = None   # 指定地点，None 则使用当前场域
+
+
 # 模型 → 后端名称映射
 BACKEND_MAP = {
     # DeepSeek
@@ -119,10 +132,23 @@ async def get_models():
 @router.get("/health")
 async def health_check():
     """健康检查"""
+    from app.world import world_runtime
+    from app.cartridge import CartridgeLoader
+
+    loader = CartridgeLoader("cartridges")
+    cartridges = loader.list_available()
+
     return {
         "status": "healthy",
         "service": "AURA",
-        "version": "0.8.2",
-        "mode": "langgraph-state-machine",
-        "debug": settings.debug_mode
+        "version": "0.9.0",
+        "mode": "dual",
+        "modes": {
+            "tavo": "LangGraph 状态机 + Prompt 编译器（/chat/completions）",
+            "world": "Director + NPC Agent 文字冒险平台（/world/completions）",
+        },
+        "world_loaded": world_runtime.is_loaded(),
+        "cartridge": world_runtime._cartridge_name if world_runtime.is_loaded() else None,
+        "available_cartridges": cartridges,
+        "debug": settings.debug_mode,
     }

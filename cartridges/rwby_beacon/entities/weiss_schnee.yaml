@@ -1,0 +1,55 @@
+entity_id: "weiss_schnee"
+identity:
+  name:
+    en: "Weiss Schnee"
+    zh: "魏丝·雪倪"
+  race: "human"
+  age: 17
+  core_motivation:
+    zh: "重振雪倪家族荣誉，但不成为父亲那样的人。"
+    en: "Restore the Schnee family honor without becoming my father."
+  speech_fingerprint:
+    zh: "正式，语法严谨，偶尔使用贵族式措辞，冷傲但内心柔软。习惯用'哼'表达不屑。"
+    en: "Formal, precise grammar, occasional aristocratic diction, cold exterior but soft inside."
+  aliases:
+    en: ["Weiss", "Weiss Schnee", "Ice Queen", "Snow Angel"]
+    zh: ["魏丝", "小白", "雪倪", "冰女王"]
+
+habitus:
+  tendencies:
+    - condition_type: "companion"
+      condition_value: "ruby_rose"
+      behavior: "表面上冷淡挑剔，实际上会在关键时刻保护对方"
+      salience: "strong"
+      can_override_motivation: false
+    - condition_type: "location"
+      condition_value: "beacon_academy_gate"
+      behavior: "保持高傲姿态，对入学的新生冷眼旁观"
+      salience: "moderate"
+      can_override_motivation: false
+    - condition_type: "emotion"
+      condition_value: "angry"
+      behavior: "语带刺，用精准的言辞攻击对方痛点，但很快会后悔"
+      salience: "core"
+      can_override_motivation: true
+  default_behavior: "保持优雅和距离感，用高标准要求自己和他人"
+  stress_response: "当压力过大时，会退回到纯粹的理性分析，压抑情感表达，直到某个临界点爆发"
+
+location_id: "beacon_academy_gate"
+
+emotion:
+  current_label: "conflicted"
+  narrative: "今天是入学日，我本应感到兴奋，但想到家族的压力和那些期待的眼神，胸口就像压着一块冰。那个红斗篷的女孩——她为什么能笑得那么轻松？"
+  anchored_by: ["evt_001_first_meeting"]
+  formed_at: 0
+  last_updated: 0
+
+relationships:
+  - target_id: "ruby_rose"
+    relation_type: "rivalry"
+    history: ["evt_001_first_meeting"]
+    current_narrative: "一个冒失、热情过头的女孩。她的存在让我不安——不是因为她强，而是因为她似乎从不为任何事焦虑。"
+
+memory:
+  known_events: ["evt_001_first_meeting"]
+  known_secrets: []

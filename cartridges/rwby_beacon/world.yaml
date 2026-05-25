@@ -1,0 +1,20 @@
+name: "信标学院"
+initial_time: 0
+open_loops:
+  - "evt_001_first_meeting"
+
+global_state:
+  season: "fall"
+  weather: "sunny"
+  time_of_day: "morning"
+
+rules:
+  - rule_id: "rule_no_grimm"
+    description: "信标学院禁止 Grimm 进入"
+    scope: ["beacon_academy_gate", "beacon_academy_campus"]
+    exception_events: []
+
+  - rule_id: "rule_dorm_curfew"
+    description: "宿舍区 22:00 后禁止男生进入女生宿舍"
+    scope: ["dormitory"]
+    exception_events: []

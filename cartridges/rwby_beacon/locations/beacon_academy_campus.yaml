@@ -1,0 +1,13 @@
+location_id: "beacon_academy_campus"
+name:
+  en: "Beacon Academy Campus"
+  zh: "信标学院校园"
+coordinates: [100.0, 0.0, 0.0]
+connected_to:
+  beacon_academy_gate: 2.0
+  dormitory: 8.0
+properties:
+  - "outdoor"
+  - "public"
+  - "spacious"
+current_entities: []

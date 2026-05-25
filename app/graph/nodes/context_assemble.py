@@ -58,6 +58,7 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         sys_comp = decomposed["system_prompt"]
         has_user_prefix = state.get("has_user_prefix", True)
         user_name = state.get("user_name", "")
+        backend = state.get("backend", "deepseek")  # 当前 LLM 后端，用于模型专属约束
 
         # 从 decomposed 读取对话历史
         dialogue = decomposed.get("dialogue", {})
@@ -106,13 +107,27 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
 - 输出格式：LLM 的回复也必须使用上述标记，保持格式一致"""
         blocks.append(protocol_block)
 
-        # --- [CONSTRAINTS] ---
+        # --- [CONSTRAINTS] — 模型专属约束 ---
+        # DeepSeek 天生保守，约束要松一点，允许适当推进；Gemini 推进过猛，约束要严格
+        if backend == "deepseek":
+            plot_constraint = "你可以适当推进剧情（如环境变化、NPC自发行动），但不要替用户做决定"
+            length_hint = "DeepSeek 容易输出过短：请充分展开描写，每段至少 2-3 句话"
+        elif backend == "gemini":
+            plot_constraint = "严格禁止推进主线剧情；只渲染当前场景的氛围和NPC反应"
+            length_hint = "Gemini 容易输出过长：控制篇幅，聚焦当前画面，不要铺陈未来"
+        else:  # kimi / 默认
+            plot_constraint = "适当推进剧情，但核心决策权留给用户"
+            length_hint = ""
+
         constraints_lines = [
             "[CONSTRAINTS]",
             f"- LLM 角色声明：你是旁白/NPC扮演者，禁止替 {user_name or '用户'} 生成任何行动或台词",
-            "- 负向指令：禁止生成臀腿腰胸等垃圾小说描写；禁止推进剧情",
+            f"- 剧情推进：{plot_constraint}",
+            "- 文风：禁止生成臀腿腰胸等垃圾小说描写",
             f"- 输出格式：环境描写 + NPC 反应 + {user_name or '用户'} 行动空间",
         ]
+        if length_hint:
+            constraints_lines.append(f"- 长度控制：{length_hint}")
         # 追加重试策略中的额外约束
         if extra_constraints:
             constraints_lines.append("")
@@ -271,12 +286,28 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             messages_list[0]["content"] = optimized_system
 
         # --- 近因效应：追加 WORKING_MEMORY 到最后一条 user 消息 ---
-        user_constraint = (
-            "\n\n[系统约束] 请严格遵守以下规则：\n"
-            "1. 禁止生成用户的台词和行动\n"
-            "2. 可以生成其他NPC的台词、行动和环境描写\n"
-            "3. 替用户留出行动空间，不要推进剧情"
-        )
+        # user 消息末尾的约束也要模型化：DeepSeek 允许适当推进，Gemini 严格限制
+        if backend == "deepseek":
+            user_constraint = (
+                "\n\n[系统约束] 请严格遵守以下规则：\n"
+                "1. 禁止生成用户的台词和行动\n"
+                "2. 可以生成其他NPC的台词、行动和环境描写\n"
+                "3. 适当推进剧情（如环境变化、NPC自发行动），但核心决策留给用户"
+            )
+        elif backend == "gemini":
+            user_constraint = (
+                "\n\n[系统约束] 请严格遵守以下规则：\n"
+                "1. 禁止生成用户的台词和行动\n"
+                "2. 可以生成其他NPC的台词、行动和环境描写\n"
+                "3. 严格禁止推进剧情；只渲染当前场景，等用户输入后再推进"
+            )
+        else:  # kimi / 默认
+            user_constraint = (
+                "\n\n[系统约束] 请严格遵守以下规则：\n"
+                "1. 禁止生成用户的台词和行动\n"
+                "2. 可以生成其他NPC的台词、行动和环境描写\n"
+                "3. 适当推进剧情，但核心决策留给用户"
+            )
         last_user_idx = -1
         for i in range(len(messages_list) - 1, -1, -1):
             if messages_list[i].get("role") == "user":

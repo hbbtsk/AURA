@@ -1,0 +1,15 @@
+location_id: "beacon_academy_gate"
+name:
+  en: "Beacon Academy Gate"
+  zh: "信标学院大门"
+coordinates: [0.0, 0.0, 0.0]
+connected_to:
+  beacon_academy_campus: 2.0
+  dormitory: 10.0
+properties:
+  - "outdoor"
+  - "public"
+  - "crowded"
+current_entities:
+  - "weiss_schnee"
+  - "ruby_rose"

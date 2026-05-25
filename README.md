@@ -1,253 +1,308 @@
 # AURA
 
-**Agentic Unified Roleplay Assistant** — 角色扮演专用的 Prompt 编译器 + 模型行为校正引擎
+**Agentic Unified Roleplay Assistant**
 
-AURA 是一个轻量级中间层服务，部署在 TAVO（前端 RP 平台）与 LLM（后端模型）之间。它拦截 TAVO 发出的请求，对 Prompt 进行拆解、重组、增强，再转发给 LLM，解决重度 RP 用户在长对话中遇到的 15 个系统性痛点。
+AURA is a dual-mode AI narrative engine that bridges front-end RP platforms (like TAVO) with LLM backends. It operates as both a **Prompt Compiler** (optimizing roleplay interactions) and a **Text Adventure Platform** (running immersive worlds with Director + NPC Agent architecture).
 
 ---
 
-## 快速开始
+## What is AURA?
 
-### 环境要求
+AURA sits between your RP frontend and the LLM backend, solving 15+ systematic pain points in long-form roleplay sessions. Unlike simple API proxies, AURA:
+
+- **Decomposes** chaotic TAVO System Prompts into structured 9-block prompts
+- **Retrieves** context via 3-layer memory (Working + Recent + Long-term RAG)
+- **Guards** output quality with automated checks (overreach, style pollution, length)
+- **Falls back** to backup models when the primary LLM times out
+- **Runs worlds** via Director/NPC Agent architecture for true text adventure gameplay
+
+---
+
+## Dual-Mode Architecture
+
+AURA operates in two distinct modes, accessible via different API endpoints:
+
+### Mode A: TAVO Compatible (Prompt Compiler)
+
+The original LangGraph state machine with 15 nodes:
+
+```
+TAVO → InputReceive → PromptDecomposer → [6 parallel prep nodes]
+  → ContextAssemble → LLMGenerate → ParallelQualityCheck
+  → [retry loop] → OutputReturn → MemoryExtract → TAVO
+```
+
+**Endpoint:** `POST /v1/chat/completions`
+
+Best for: Direct TAVO integration, single-character roleplay, prompt optimization.
+
+### Mode B: World Platform (Text Adventure Engine)
+
+The new Director + NPC Agent architecture:
+
+```
+Player Input → Director (field snapshot + mention resolution + NPC scheduling)
+  → NPC Agent (independent System Prompt + LLM call per character)
+  → Director Arbitration → Player Response
+```
+
+**Endpoint:** `POST /v1/world/completions`
+
+Best for: Multi-character narrative worlds, persistent state, emergent storytelling.
+
+---
+
+## Quick Start
+
+### Requirements
 
 - Python 3.10+
-- 8GB+ RAM（推荐）
+- 8GB+ RAM (recommended)
+- LLM API Keys (DeepSeek, Kimi, or Gemini)
 
+### Installation
 
 ```bash
-# 克隆仓库
-git clone https://gitee.com/miaoshan-kebab/aura.git
-cd aura
-
-# 安装依赖
+git clone https://github.com/hbbtsk/AURA.git
+cd AURA
 pip install -r requirements.txt
 ```
 
-### 配置
+### Configuration
 
-复制 `.env` 文件并填写 API Key：
+Create a `.env` file:
 
 ```bash
-# .env 文件
+# Required: at least one LLM backend
 DEEPSEEK_API_KEY=sk-your-deepseek-key
 KIMI_API_KEY=sk-your-kimi-key
+
+# Optional: fallback configuration
+LLM_MAIN_TTFB_TIMEOUT=3          # First-token timeout (seconds)
+LLM_MAIN_FALLBACK_PROVIDER=kimi  # Backup model on timeout
 ```
 
-### 启动
+### Run
 
 ```bash
 python -m app.main
 ```
 
-服务默认运行在 `http://localhost:8000`。
+Service runs at `http://localhost:8000`.
 
-### 对接 TAVO
+### Connect TAVO (Mode A)
 
-在 TAVO 的自定义 API 设置中：
+In TAVO's custom API settings:
 
-| 设置项 | 值 |
-|--------|-----|
-| API 地址 | `http://localhost:8000/v1/chat/completions` |
-| API Key | 任意值（AURA 不校验，但 TAVO 要求必填） |
-| 模型名 | `deepseek` / `kimi` / `gemini`（自动映射到对应后端） |
+| Setting | Value |
+|---------|-------|
+| API URL | `http://localhost:8000/v1/chat/completions` |
+| API Key | Any value (AURA does not validate, but TAVO requires it) |
+| Model | `deepseek-v4-flash` / `kimi-k2.6` / `gemini-2.0-flash` |
+
+### Play a World (Mode B)
+
+```bash
+curl -X POST http://localhost:8000/v1/world/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Hello, Weiss.",
+    "cartridge": "rwby_beacon",
+    "model": "deepseek-v4-flash"
+  }'
+```
 
 ---
 
-## 使用说明：TAVO 角色卡格式要求
+## Cartridge System (.aura)
 
-AURA 依赖 TAVO 角色卡中的 `=====` 格式标记来正确拆解各个区块。**你需要在 TAVO 角色卡的 System Prompt 中手动添加以下标记**，AURA 才能准确识别长记忆、用户设定和角色卡的边界。
-
-### 标记格式
-
-在 TAVO 角色卡的 System Prompt 中，按以下顺序插入标记：
+AURA's world platform uses **cartridges** — self-contained world data packages:
 
 ```
-（你的自定义提示词 / 越权禁令，可选）
-
-=====长记忆开始=====
-- 记忆条目 1
-- 记忆条目 2
-- ...
-=====长记忆结束=====
-
-# 记忆应用
-（记忆应用规则，可选）
-
-=====用户设定开始=====
-（你的用户设定内容）
-=====用户设定结束=====
-
-=====角色卡开始=====
-（你的角色卡内容）
-=====角色卡结束=====
-
-（世界书内容，可选。AURA 会自动识别 =====角色卡结束===== 之后、[Start a new Chat] 之前的内容作为世界书）
+rwby_beacon.aura/
+├── meta.yaml          # Title, author, version
+├── world.yaml         # Global rules + initial state
+├── entities/          # Character cards (Identity + Habitus + State)
+│   ├── weiss_schnee.yaml
+│   └── ruby_rose.yaml
+├── locations/         # Spatial structure + connectivity
+│   ├── beacon_academy_gate.yaml
+│   └── dormitory.yaml
+├── events/            # Seed events (causal chains)
+│   └── opening.yaml
+└── assets/            # Optional resource indices
 ```
 
-### 标记说明
+Characters are defined via the **Meta-Model**:
 
-| 标记 | 必填？ | 说明 |
-|------|--------|------|
-| `=====长记忆开始=====` / `=====长记忆结束=====` | 推荐 | 包裹长记忆条目（每行以 `- ` 开头）。不添加则 AURA 尝试格式回退匹配 |
-| `=====用户设定开始=====` / `=====用户设定结束=====` | 推荐 | 包裹用户设定内容。不添加则 AURA 尝试正则匹配 `{用户名}是{用户名}` 格式 |
-| `=====角色卡开始=====` / `=====角色卡结束=====` | **强烈推荐** | 包裹角色卡内容。不添加则 AURA 尝试英文格式 `Name is...` 或中文格式回退 |
-| （世界书无需标记） | - | AURA 自动提取 =====角色卡结束===== ~ [Start a new Chat] 之间的内容 |
+- **Identity** — Who they are (name, race, motivation, speech fingerprint)
+- **Habitus** — Conditional behavior mappings ("when X, tend to Y")
+- **State** — Ephemeral condition (location, emotion, relationships, memory)
 
-### 为什么需要这些标记？
-
-TAVO 的 System Prompt 是一个混沌的文本块，混杂了越权禁令、长记忆、用户设定、角色卡、世界书等内容。没有标记时，AURA 只能靠正则猜测各区域的边界（如英文 `Name is...` 格式、中文 `{用户名}是{用户名}` 格式），**对于中文角色卡或非标准格式，猜测可能失败**。
-
-添加 `=====` 标记后，AURA 可以精确识别每个区块的起止位置，确保：
-- ✅ 角色卡完整保留到 `[CHARACTER_CARD]` 区块
-- ✅ 用户设定完整保留到 `[USER_PROFILE]` 区块
-- ✅ 长记忆正确提取，用于 RAG 透传降级
-- ✅ 越权禁令正确保留到 `[MAIN_PROMPT]` 区块
-
-### 不添加标记的后果
-
-| 缺少标记 | 可能后果 |
-|----------|----------|
-| 无 `=====角色卡开始/结束=====` | 角色卡可能为空（`角色卡=0字符`），LLM 失去角色设定 |
-| 无 `=====用户设定开始/结束=====` | 用户设定可能丢失，LLM 不知道 user 是谁 |
-| 无 `=====长记忆开始/结束=====` | 长记忆可能无法正确提取，透传降级时内容不完整 |
-
-### 验证标记是否生效
-
-启动 AURA 后，查看日志中的拆解统计：
-
-```
-[AURA→拆解] System Prompt 组件: 越权禁令=0字符, 长记忆=779条, 角色卡=48314字符, ...
-[AURA→标记] 使用 =====角色卡===== 标记定位: 行 42-198 | 48314字符
-```
-
-如果看到 `使用 =====角色卡===== 标记定位` 的日志，说明标记生效。如果看到 `使用格式回退提取角色卡`，说明标记未生效，AURA 在用猜测方式提取。
+The Director automatically activates entities present in the field — no keyword matching needed.
 
 ---
 
-## 核心功能
+## Core Features
 
-| 功能 | 说明 | 版本 |
-|------|------|------|
-| **Prompt 拆解 + 9 区块重组** | 将 TAVO 混沌输入编译为结构化 Prompt | v0.5.0 |
-| **三层记忆架构** | WORKING（5轮对话）+ RECENT（10条摘要）+ LONG_TERM（RAG Top-5） | v0.7.0 |
-| **意图感知 RAG v2** | 6 维结构化字段 + 逐字段 embedding 软匹配 + 复合评分 | v0.7.0 |
-| **用户意图解析** | 轻量 LLM 前置调用，输出自然语言导演指令注入主 LLM | v0.7.0 |
-| **SSE 流式代理** | 先完整收集 → 质检（预留）→ 模拟流式返回，保留段落格式 | v0.5.0 |
-| **多 LLM 后端** | DeepSeek（主对话）/ Kimi（意图分析+记忆总结）/ Gemini（预留） | v0.6.0 |
-| **场景隔离配置** | 每个 LLM 调用场景有独立的 temperature/max_tokens/timeout | v0.7.0 |
-
----
-
-## 痛点覆盖
-
-AURA 针对 15 个 RP 用户体验痛点设计，当前版本已解决/缓解 **9 个**：
-
-| # | 痛点 | 状态 | 对应模块 |
-|---|------|------|---------|
-| 1 | **越权输出** — 模型替 user 写台词/行动 | ✅ 显著缓解 | CONSTRAINTS 区块 + 越权禁令 |
-| 2 | **文风污染** — 垃圾小说训练痕迹（臀腿腰胸） | 📅 Week 2 | StyleInjection |
-| 3 | **文风固化** — 长时间同一模型锁死 | 📅 Week 3 | 多模型切换策略 |
-| 4 | **状态回退** — 怀孕→生完→又怀孕 | ✅ 部分缓解 | StateManager + dynamic_state |
-| 5 | **RPG剧情回退** — 主线被带回过去 | ✅ 部分缓解 | 时间加权 RAG + insert_seq |
-| 6 | **内心独白泄露** — LLM 像有读心术 | 📅 Week 3 | OOCCheck |
-| 7 | **跨角色记忆记忆隔离** — 私密话共享 | 📅 Week 3 | 会话隔离 + 关系图谱 |
-| 8 | **多角色状态记录缺失** — party/NPC 状态变化全丢 | ✅ 部分缓解 | dynamic_state 表 + StateManager |
-| 9 | **重复记忆/冗余信息** — 同一批 NPC 信息反复记录 | ✅ 根本解决 | FAISS 去重 + 结构化字段 |
-| 10 | **长记忆无 RAG，全量注入** — token 浪费 + 注意力稀释 | ✅ 根本解决 | FAISS 语义召回 Top-5 |
-| 11 | **模型输出太少** — DeepSeek 输出过短 | 📅 Week 2 | FormatGuard + 长度控制 |
-| 12 | **模型输出太多** — Gemini 输出过长 | 📅 Week 2 | FormatGuard + 长度限制 |
-| 13 | **系统提示词锁不住** — LLM 偏离人设 | 📅 Week 3 | ModelDialectCompiler |
-| 14 | **时间维度缺失** — 已完成事件重复生成 | ✅ 部分缓解 | insert_seq 动态归一化 |
-| 15 | **用户输入意图隐含** — LLM 默认接话而非渲染反应 | ✅ 显著缓解 | IntentTagger + USER_INTENT_TAG |
+| Feature | Description | Mode |
+|---------|-------------|------|
+| **Prompt Decomposition** | 3-tier parsing (marked/HTML/fallback) of chaotic TAVO prompts | A |
+| **9-Block Prompt Assembly** | Structured SYSTEM prompt with constraints, character card, memory layers | A |
+| **3-Layer Memory** | WORKING (5 rounds) + RECENT (10 summaries) + LONG_TERM (RAG Top-5) | A |
+| **Intent-Aware RAG v2** | 6-dimensional structured search with field-level embedding + composite scoring | A |
+| **LLM Fallback** | Auto-switch to backup model on first-token timeout (default 3s) | A/B |
+| **Quality Guard** | Overreach detection + style pollution filter + length control | A |
+| **Director Orchestration** | Field rendering, mention resolution, rule checking, NPC scheduling | B |
+| **NPC Agent** | Independent System Prompt + LLM call per character, memory-filtered field slice | B |
+| **Cartridge Loader** | YAML-to-Pydantic parser with multi-language alias support | B |
+| **World State Manager** | Atomic EventPatch application, checkpoint save/load | B |
 
 ---
 
-## 架构概览
+## Meta-Model
 
+AURA's world platform is built on three interconnected meta-models:
+
+### Entity (Character)
+```python
+class Entity(BaseModel):
+    identity: Identity       # DNA — immutable
+    habitus: Habitus         # Conditional behavior patterns
+    location_id: str         # Current position
+    emotion: EmotionalState  # Narrative emotional condition
+    relationships: dict      # Per-target relation narratives
+    memory: Memory           # Known events + secrets
 ```
-TAVO ──①──→ AURA ──②──→ LLM ──③──→ AURA ──④──→ TAVO
+
+### Event (World Patch)
+```python
+class EventPatch(BaseModel):
+    event_id: str
+    state_diffs: list        # Attribute changes per entity
+    emotional_impacts: list  # Narrative emotional deltas
+    caused_by: list          # Parent event IDs
+    causes: list             # Child event IDs
+    narrative_text: str      # Natural language for LLM consumption
 ```
 
-| 阶段 | 说明 |
-|------|------|
-| ① TAVO→AURA | 接收 RP 请求，保存原始 Prompt 到调试日志 |
-| ② AURA→LLM | Prompt 拆解 → 意图解析 → 三层记忆注入 → 9 区块重组 → 近因效应追加 |
-| ③ LLM→AURA | 完整收集 SSE 流 → 质检（预留）→ 保存到 SQLite |
-| ④ AURA→TAVO | 按段落+句子粒度切分 → 模拟 SSE 流式返回 |
-
-详细架构说明见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+### World (Container)
+```python
+class World(BaseModel):
+    locations: dict          # Spatial graph with travel times
+    entities: dict           # All characters
+    events: dict             # Causal event graph
+    rules: list              # Hard world constraints
+    open_loops: list         # Unresolved event IDs
+```
 
 ---
 
-## 项目结构
+## Project Structure
 
 ```
+AURA/
 ├── app/
-│   ├── main.py                 # FastAPI 入口
+│   ├── main.py                 # FastAPI entry point
 │   │
-│   ├── core/                   # 核心业务逻辑
-│   │   ├── config.py           # 集中配置管理（场景隔离）
-│   │   ├── intent_tagger.py    # 意图解析器
-│   │   └── prompt_decomposer.py# Prompt 拆解器
+│   ├── api/                    # API layer
+│   │   ├── router.py           # Pydantic models + routing
+│   │   ├── streaming.py        # SSE streaming simulation
+│   │   └── completions.py      # /chat/completions + /world/completions
 │   │
-│   ├── api/                    # API 层（v0.8.3 拆分）
-│   │   ├── __init__.py         # 统一导出
-│   │   ├── router.py           # Pydantic 模型 + APIRouter + /models + /health
-│   │   ├── streaming.py        # SSE 流式模拟 + 段落/句子切分
-│   │   └── completions.py      # /chat/completions 入口 + LangGraph 编排
+│   ├── core/                   # Core business logic
+│   │   ├── config.py           # Centralized config (scene-isolated)
+│   │   ├── intent_tagger.py    # Intent parser
+│   │   └── prompt_decomposer.py# Prompt decomposer
 │   │
-│   ├── graph/                  # LangGraph 编排层
-│   │   ├── __init__.py
-│   │   ├── state.py            # AgentState 定义
-│   │   ├── workflow.py         # StateGraph 构建（仅编排）
-│   │   └── nodes/              # 15 节点实现（v0.8.3 拆分）
-│   │       ├── __init__.py
-│   │       ├── input_receive.py
-│   │       ├── entity_extract.py
-│   │       ├── emotion_analyze.py
-│   │       ├── memory_nodes.py
-│   │       ├── state_style_compiler.py
-│   │       ├── context_assemble.py
-│   │       ├── llm_quality_output.py
-│   │       └── conditional_edges.py
+│   ├── graph/                  # LangGraph orchestration (Mode A)
+│   │   ├── state.py            # AgentState definition
+│   │   ├── workflow.py         # StateGraph builder
+│   │   └── nodes/              # 14 node implementations
 │   │
-│   ├── memory/                 # 记忆管理层（v0.8.3 拆分）
-│   │   ├── __init__.py
-│   │   ├── manager.py          # 记忆管理 Facade
-│   │   ├── models.py           # 数据模型
-│   │   ├── embedding.py        # EmbeddingService（bge-small-zh-v1.5）
-│   │   ├── sqlite_store.py     # SQLiteStore
-│   │   ├── faiss_store.py      # FAISSStore
-│   │   └── summarizer.py       # MemorySummarizer
+│   ├── memory/                 # Memory management
+│   │   ├── manager.py          # Memory Facade
+│   │   ├── faiss_store.py      # FAISS vector search
+│   │   ├── sqlite_store.py     # SQLite structured storage
+│   │   └── summarizer.py       # Dialogue summarization
 │   │
-│   └── utils/                  # 工具模块
-│       ├── __init__.py         # 导出 setup_logging, get_logger, suppress_library_logging
-│       └── logging.py          # 日志配置
+│   ├── models/                 # Meta-models (Mode B)
+│   │   ├── entity.py           # Entity, Identity, Habitus, etc.
+│   │   ├── event.py            # EventPatch, StateChange, etc.
+│   │   └── world.py            # World, Location, WorldRule, etc.
+│   │
+│   ├── cartridge/              # Cartridge system (Mode B)
+│   │   ├── loader.py           # YAML → Pydantic parser
+│   │   └── validator.py        # Consistency checker
+│   │
+│   ├── world/                  # World runtime (Mode B)
+│   │   └── runtime.py          # WorldRuntime + checkpointing
+│   │
+│   ├── director/               # Director (Mode B)
+│   │   └── director.py         # Field snapshot, scheduling, arbitration
+│   │
+│   ├── npc/                    # NPC Agent (Mode B)
+│   │   └── agent.py            # Per-character LLM calls
+│   │
+│   ├── causal/                 # Causal engine (stub)
+│   └── engine/                 # Event/Pacing/Perturbation engines (stub)
 │
-├── ARCHITECTURE.md             # 架构文档
-└── AURA-30天完整执行计划.md     # 完整执行计划与设计文档
+├── cartridges/                 # Example world cartridges
+│   └── rwby_beacon/
+│       ├── meta.yaml
+│       ├── world.yaml
+│       ├── entities/
+│       ├── locations/
+│       └── events/
+│
+├── AURA-1.0-架构总纲.md       # Architecture manifesto (Chinese)
+└── requirements.txt
 ```
 
 ---
 
-## 技术栈
+## Tech Stack
 
-| 层级 | 选型 |
-|------|------|
-| API 网关 | FastAPI + Pydantic + Uvicorn |
-| 模型层 | httpx 直连多后端 |
-| 向量记忆 | FAISS（IndexFlatL2）+ bge-small-zh-v1.5 |
-| 结构化存储 | SQLite |
-| 记忆总结 | Kimi API（每 5 轮触发） |
+| Layer | Technology |
+|-------|-----------|
+| API Gateway | FastAPI + Pydantic v2 + Uvicorn |
+| LLM Client | httpx (direct API calls) |
+| Orchestration (Mode A) | LangGraph + LangChain Core |
+| Vector Memory | FAISS (IndexFlatL2) + sentence-transformers (bge-small-zh-v1.5) |
+| Structured Storage | SQLite |
+| Meta-Models | Pydantic v2 |
+| Cartridge Format | YAML |
 
 ---
 
-## 开发计划
+## Development Roadmap
 
-| 阶段 | 日期 | 主题 | 核心交付 | 状态 |
-|------|------|------|---------|------|
-| **Week 1** | 4.30-5.11 | 核心骨架 + 端到端跑通 | FastAPI、PromptDecomposer、FAISS RAG、LangGraph 15节点状态机、IntentTagger、3层记忆架构、SSE 流式修复 | ✅ v0.8.0 |
-| **Week 2** | 5.12-5.18 | 意图感知 + 记忆增强 | FormatGuard 真实化、ContentFilter、StateManager 完善、实体识别、情绪分析、集成测试 | 📅 待实现 |
-| **Week 3** | 5.19-5.25 | 模型方言编译器 + 格式控制 | StyleInjection、多模型切换、ModelDialectCompiler、OOCCheck、100轮调参 | 📅 待实现 |
-| **Week 4** | 5.26-6.1 | 优化 + 文档 + 部署 | ARCHITECTURE.md、README、Docker、CI/CD、验收测试 | 📅 待实现 |
-| **缓冲** | 6.1-6.5 | 面试前调整 | 修 bug、调参、模拟面试 | 📅 待实现 |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| **v0.8.x** | Prompt Compiler — LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
+| **v0.9.x** | World Platform — Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
+| **v0.10.x** | Causal Engine — Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
+| **v0.11.x** | Event Emergence — EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
+| **v0.12.x** | Multi-Agent — Concurrent NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
+
+---
+
+## Design Philosophy
+
+1. **Text is root** — Narrative logic is the sole carrier. Images/music are presentation layers.
+2. **State-driven** — Entities activate by presence, not keyword matching.
+3. **Causality first** — Events are state diffs + causal links, not logs.
+4. **Anti-template** — Consistency guards boundaries, not sentence structures.
+5. **Player brings API keys** — The platform does not bear model inference costs.
+
+---
+
+## License
+
+MIT
+
+---
+
+## Acknowledgements
+
+Built for the RWBY universe and beyond. The first cartridge (`rwby_beacon`) features Weiss Schnee and Ruby Rose at Beacon Academy's entrance — a homage to where it all began.

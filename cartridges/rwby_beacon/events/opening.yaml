@@ -1,0 +1,37 @@
+event_id: "evt_001_first_meeting"
+timestamp: 0
+location_id: "beacon_academy_gate"
+participants:
+  - "weiss_schnee"
+  - "ruby_rose"
+
+state_diffs: []
+
+emotional_impacts:
+  - entity_id: "weiss_schnee"
+    narrative_delta: "鲁比的红斗篷和冒失的撞肩动作打破了她对入学日的预期。那种毫不掩饰的热情让她想起了某个人。"
+    adds_to_history: []
+    updates_relationship_narrative:
+      ruby_rose: "一个冒失、热情过头的女孩。她的存在让我不安。"
+  - entity_id: "ruby_rose"
+    narrative_delta: "撞到了那个银发女孩，但她没有生气，只是冷冷地看着自己。那双冰蓝色的眼睛里似乎藏着很多东西。"
+    adds_to_history: []
+    updates_relationship_narrative:
+      weiss_schnee: "一个很漂亮但看起来有点凶的女孩。"
+
+narrative_text: "入学日的早晨，阳光透过银杏叶洒在信标学院的大门前。魏丝·雪倪站在台阶上，整理着行李，冰蓝色的眼睛扫视着来来往往的新生。突然，一个红色的身影从人群中冲出来——鲁比·罗丝，怀里抱着巨大的武器箱，一头撞上了魏丝的肩膀。武器箱摔在地上，发出沉闷的响声。魏丝皱起眉头，正要说些什么，却看见鲁比慌张地抬起头，那双银灰色的眼睛里满是歉意和——某种让她不安的纯粹。"
+
+caused_by: []
+causes: []
+activates: []
+closes: []
+
+public_to:
+  - "weiss_schnee"
+  - "ruby_rose"
+secret_to: []
+hidden_from: []
+
+causal_weight: 0.8
+is_key_foreshadowing: true
+is_closed: false

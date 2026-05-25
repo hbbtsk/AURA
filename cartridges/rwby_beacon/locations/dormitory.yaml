@@ -1,0 +1,13 @@
+location_id: "dormitory"
+name:
+  en: "Student Dormitory"
+  zh: "学生宿舍"
+coordinates: [150.0, 0.0, 50.0]
+connected_to:
+  beacon_academy_campus: 8.0
+  beacon_academy_gate: 10.0
+properties:
+  - "indoor"
+  - "private"
+  - "quiet"
+current_entities: []

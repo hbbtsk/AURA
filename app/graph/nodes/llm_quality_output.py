@@ -1,11 +1,16 @@
 """
 LLM 生成 + 质检 + 输出 节点
 
-Node 11: LLMGenerate（已真实化）
+Node 11: LLMGenerate（已真实化，支持主备故障转移）
 Node 12: FormatGuard（基于规则的越权输出检测）
 Node 13: OOCCheck（轻量人设一致性检查）
 Node 14: ContentFilter（mock — 由 TAVO/LLM 服务商负责内容安全）
 Node 15: OutputReturn
+
+故障转移设计：
+    - 主模型调用受 ttfb_timeout 限制（默认 3 秒）
+    - 超时后自动切换到 fallback_provider（默认 kimi），使用完整 timeout
+    - 切换后重新发送相同 payload，保证用户体验不中断
 
 质检层并行化：
     LLMGenerate → ParallelQualityCheck（FormatGuard + OOCCheck + ContentFilter 并行）
@@ -14,7 +19,7 @@ Node 15: OutputReturn
 import asyncio
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Dict, Any
 
 import httpx
 
@@ -49,33 +54,23 @@ def _log_node_end(state: "AgentState", node_name: str, t0: float, summary: str =
 
 
 # ================================================================
-# Node 10: LLMGenerate
+# 内部辅助：单次 LLM 调用
 # ================================================================
-async def llm_generate_node(state: "AgentState") -> "AgentState":
-    """LLM 生成 — 非流式调用（已真实化）"""
-    t0 = _log_node_start(state, "LLMGenerate")
+async def _call_single_llm(
+    backend: str,
+    model_name: Optional[str],
+    payload: Dict[str, Any],
+    timeout: int,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """
+    执行单次 LLM 调用。
 
-    backend = state.get("backend", settings.default_llm)
-    model_name = state.get("model")
+    Returns:
+        (llm_data, error_msg) — llm_data 为 None 时表示调用失败
+    """
     llm_config = get_llm_config(backend, scene="main", model_name=model_name)
     if not llm_config or not llm_config.api_key:
-        _log_node_end(state, "LLMGenerate", t0, "LLM 配置缺失")
-        return {
-            **state,
-            "error": f"后端 {backend} 未正确配置",
-            "llm_response_content": "",
-        }
-
-    messages_list = state.get("messages_list", [])
-
-    payload = {
-        "model": state.get("model", "deepseek-v4-flash"),
-        "messages": messages_list,
-        "temperature": state.get("temperature", 0.7),
-        "stream": False,
-    }
-    if state.get("max_tokens"):
-        payload["max_tokens"] = state["max_tokens"]
+        return None, f"后端 {backend} 未正确配置"
 
     api_key = llm_config.api_key.strip()
     headers = {
@@ -84,52 +79,129 @@ async def llm_generate_node(state: "AgentState") -> "AgentState":
     }
     url = f"{llm_config.base_url.rstrip('/')}/chat/completions"
 
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout, read=timeout)
+    ) as client:
+        response = await client.post(url, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        err = response.text[:500]
+        logger.error(f"[_call_single_llm] 后端错误: {response.status_code} | {err}")
+        return None, f"LLM后端错误({backend}): {err}"
+
+    return response.json(), None
+
+
+# ================================================================
+# Node 10: LLMGenerate（支持主备故障转移）
+# ================================================================
+async def llm_generate_node(state: "AgentState") -> "AgentState":
+    """
+    LLM 生成 — 非流式调用，支持主备故障转移。
+
+    流程：
+        1. 使用主模型（state.backend）调用，受 ttfb_timeout 限制
+        2. 若超时（asyncio.TimeoutError）→ 自动切换到 fallback_provider
+        3. fallback 使用完整 timeout，不限制首 token 时间
+        4. 记录 actual_backend 与 fallback_triggered 到 state
+    """
+    t0 = _log_node_start(state, "LLMGenerate")
+
+    primary_backend = state.get("backend", settings.default_llm)
+    model_name = state.get("model")
+    messages_list = state.get("messages_list", [])
+
+    payload = {
+        "model": model_name or "deepseek-v4-flash",
+        "messages": messages_list,
+        "temperature": state.get("temperature", 0.7),
+        "stream": False,
+    }
+    if state.get("max_tokens"):
+        payload["max_tokens"] = state["max_tokens"]
+
+    # ---------- 第一轮：主模型（受 ttfb_timeout 限制） ----------
+    llm_data: Optional[Dict[str, Any]] = None
+    error_msg: Optional[str] = None
+    actual_backend = primary_backend
+    fallback_triggered = False
+    fallback_reason = ""
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(llm_config.timeout, read=llm_config.timeout)
-        ) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        llm_data, error_msg = await asyncio.wait_for(
+            _call_single_llm(
+                primary_backend,
+                model_name,
+                payload,
+                timeout=settings.llm_main_timeout,
+            ),
+            timeout=settings.llm_main_ttfb_timeout,
+        )
+    except asyncio.TimeoutError:
+        fallback_triggered = True
+        fallback_reason = f"ttfb_timeout: {primary_backend}"
+        logger.warning(
+            f"[LLMGenerate] 主模型 {primary_backend} 首 token 超时 "
+            f"({settings.llm_main_ttfb_timeout}s)，触发故障转移 → {settings.llm_main_fallback_provider}"
+        )
 
-        if response.status_code != 200:
-            err = response.text[:500]
-            logger.error(f"[LLMGenerate] 后端错误: {response.status_code} | {err}")
-            _log_node_end(state, "LLMGenerate", t0, f"后端错误: {response.status_code}")
-            return {
-                **state,
-                "error": f"LLM后端错误: {err}",
-                "llm_response_content": "",
-            }
+    # ---------- 第二轮：fallback 模型（若主模型超时） ----------
+    if fallback_triggered:
+        fallback_backend = settings.llm_main_fallback_provider
+        try:
+            llm_data, error_msg = await _call_single_llm(
+                fallback_backend,
+                model_name,
+                payload,
+                timeout=settings.llm_main_timeout,
+            )
+            actual_backend = fallback_backend
+        except Exception as e:
+            logger.exception(f"[LLMGenerate] fallback 模型 {fallback_backend} 调用失败")
+            error_msg = f"主模型超时且 fallback 失败: {e}"
+            actual_backend = fallback_backend
 
-        llm_data = response.json()
-        message = llm_data.get("choices", [{}])[0].get("message", {})
-        content = message.get("content", "")
-        reasoning_content = message.get("reasoning_content", "")
-        usage = llm_data.get("usage", {})
-
-        summary_parts = [f"内容长度: {len(content)}字"]
-        if reasoning_content:
-            summary_parts.append(f"思考: {len(reasoning_content)}字")
-        summary_parts.append(f"prompt_tokens: {usage.get('prompt_tokens', '?')}")
-        summary_parts.append(f"completion_tokens: {usage.get('completion_tokens', '?')}")
-
-        _log_node_end(state, "LLMGenerate", t0, ", ".join(summary_parts))
-
+    # ---------- 错误处理 ----------
+    if error_msg or llm_data is None:
+        _log_node_end(
+            state, "LLMGenerate", t0,
+            f"失败 | backend={actual_backend} | fallback={fallback_triggered} | {error_msg}"
+        )
         return {
             **state,
-            "llm_payload": payload,
-            "llm_response_content": content,
-            "llm_reasoning_content": reasoning_content,
-            "llm_raw_response": llm_data,
-        }
-
-    except Exception as e:
-        logger.exception("[LLMGenerate] 异常")
-        _log_node_end(state, "LLMGenerate", t0, f"异常: {e}")
-        return {
-            **state,
-            "error": str(e),
+            "error": error_msg or "LLM 调用未知错误",
             "llm_response_content": "",
+            "actual_backend": actual_backend,
+            "fallback_triggered": fallback_triggered,
+            "fallback_reason": fallback_reason,
         }
+
+    # ---------- 解析响应 ----------
+    message = llm_data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    reasoning_content = message.get("reasoning_content", "")
+    usage = llm_data.get("usage", {})
+
+    summary_parts = [f"backend={actual_backend}", f"内容长度: {len(content)}字"]
+    if reasoning_content:
+        summary_parts.append(f"思考: {len(reasoning_content)}字")
+    if fallback_triggered:
+        summary_parts.append(f"⚠️ 已故障转移: {fallback_reason}")
+    summary_parts.append(f"prompt_tokens: {usage.get('prompt_tokens', '?')}")
+    summary_parts.append(f"completion_tokens: {usage.get('completion_tokens', '?')}")
+
+    _log_node_end(state, "LLMGenerate", t0, ", ".join(summary_parts))
+
+    return {
+        **state,
+        "llm_payload": payload,
+        "llm_response_content": content,
+        "llm_reasoning_content": reasoning_content,
+        "llm_raw_response": llm_data,
+        "actual_backend": actual_backend,
+        "fallback_triggered": fallback_triggered,
+        "fallback_reason": fallback_reason,
+    }
 
 
 # ================================================================

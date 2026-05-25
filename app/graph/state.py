@@ -72,6 +72,9 @@ class AgentState(TypedDict, total=False):
     llm_response_content: str         # LLM 生成的完整文本
     llm_reasoning_content: str        # LLM 的思考过程（reasoning_content）
     llm_raw_response: Dict[str, Any]  # LLM 原始 JSON 响应
+    actual_backend: str               # 实际使用的后端（可能与请求的 backend 不同，fallback 后变更）
+    fallback_triggered: bool          # 是否触发了故障转移（主模型超时后切换到备用模型）
+    fallback_reason: str              # 故障转移原因（如 "ttfb_timeout: deepseek"）
 
     # ================================================================
     # 质检层（FormatGuard / OOCCheck / ContentFilter）
