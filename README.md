@@ -255,7 +255,11 @@ AURA/
 │       ├── locations/
 │       └── events/
 │
-├── AURA-1.0-架构总纲.md       # Architecture manifesto (Chinese)
+├── ROADMAP.md                  # Vision & roadmap (English)
+├── ROADMAP.zh.md               # 愿景与路线图 (中文)
+├── docs/
+│   ├── vscode-guide.md         # VSCode quick start (English)
+│   └── vscode-guide.zh.md      # VSCode 启动指南 (中文)
 └── requirements.txt
 ```
 
