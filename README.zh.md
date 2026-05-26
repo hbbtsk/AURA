@@ -2,41 +2,52 @@
   <a href="README.md">🇺🇸 English</a>
 </p>
 
-<h1 align="center">AURA</h1>
+<h1 align="center">AURA 🚧</h1>
 
 <p align="center">
-  <strong>开源、可私有化部署的 AI 互动叙事引擎</strong><br>
-  事件总线 × 角色状态机 × 八层人物定义<br>
-  让 SillyTavern 的角色卡真正拥有记忆、创伤与成长
+  <strong>⚠️ 这不是一个开箱即用的产品。这是一个架构验证项目。</strong><br><br>
+  我们正在构建<strong>事件驱动的 AI 叙事引擎：角色状态机 + 事件总线</strong>。<br>
+  架构已验证，实现进行中。<br>
+  ST 兼容前端，私有化部署，用户自带 Key。
 </p>
 
 ---
 
-## 这不是又一个 API 代理
+## 为什么做这个项目
 
-SillyTavern 和 TAVO 是优秀的前端，但它们把"角色一致性"全部押注在 LLM 的上下文窗口上。20 轮后 OOC、多角色串戏、状态回退、文风污染——这些问题不是 Prompt 写得不够好，是**架构本身没有状态层**。
+SillyTavern 和 TAVO 是优秀的前端，但它们把角色一致性全部押注在 LLM 的上下文窗口上。20 轮后 OOC、多角色串戏、状态回退、文风污染——这不是 Prompt 能修好的，是**架构缺陷**。
 
-AURA 在前端与 LLM 之间增加了一层**确定性叙事架构**：
+**我们想验证的假设**：如果在前端与 LLM 之间插入一层"事件总线 + 状态机"，角色能否真正拥有记忆、创伤与成长弧线？
 
-| 痛点 | 传统方案（Prompt 硬塞） | AURA（状态机驱动） |
-|------|----------------------|------------------|
-| 角色 20 轮后失忆/OOC | 靠 Summary 压缩历史 | **事件总线永久存储 + RAG 按需召回** |
-| 多角色各说各话 | 单 Prompt 群聊，一个大脑分裂扮演多人 | **独立 NPC Agent，各自状态机，事件交换** |
-| 怀孕→生完→又怀孕 | LLM 概率回退 | **世界 Agent 仲裁，状态快照不可篡改** |
-| 文风污染/固化 | 模型训练痕迹无法清洗 | **八层人物定义锁定语言指纹，腔调层隔离** |
-| 内心独白泄露 | LLM 像有读心术 | **Visibility 字段，私密事件不广播** |
-| 玩家台词被越权代写 | 靠 Prompt 约束别写 | **JSON Schema 输出控制，规则引擎兜底** |
-| 模型输出太长/太短 | 反复调 Temperature | **结构化输出 + 长度硬约束，不二次调用** |
-
-**核心差异一句话**：ST 是"面具仓库"，AURA 是"骨骼与神经系统"。
+如果你曾经历过心爱的 RP 角色突然忘记你们的共同历史，或者群聊里的两个 NPC 听起来像同一个人，你就理解我们想解决的痛苦。
 
 ---
 
-## 核心架构：人物 · 事件 · 世界
+## 当前状态
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| **事件总线设计** | ✅ 已验证 | 数据模型、因果链、Visibility 机制已定义 |
+| **八层人物模型** | ✅ 已验证 | 存在/腔调/根底/脉络/内里/张力/轨迹/钩子 |
+| **Mode A: Prompt 编译器** | 🚧 骨架可跑 | 可接入 TAVO，基础 3 层记忆，质量校验开发中 |
+| **Mode B: 世界平台** | 📋 设计阶段 | Director + NPC Agent 架构文档完成，代码待实现 |
+| **ST 角色卡导入器** | 📋 待开发 | PNG/JSON 解析，八层自动填充 |
+| **因果引擎** | 📋 待开发 | Kuzu 图数据库，长线叙事追踪 |
+| **本地 VLM 集成** | 📋 待开发 | Qwen2.5-VL / MiniCPM-V 图片解析 |
+
+**预计可用时间**
+- Mode A 稳定版：2026 年 Q3
+- Mode B 原型：2026 年 Q4
+
+---
+
+## 我们在验证什么
+
+### 目标架构：人物 · 事件 · 世界
 
 AURA 的所有叙事逻辑建立在三个结构化实体上，不是聊天记录，而是**状态变更 + 因果链 + 规则仲裁**。
 
-### 人物（Entity）—— 不是静态卡，是活体
+#### 人物（Entity）—— 不是静态卡，是活体
 
 导入 SillyTavern 角色卡后，AURA 将其解析为**八层定义**：
 
@@ -51,7 +62,7 @@ AURA 的所有叙事逻辑建立在三个结构化实体上，不是聊天记录
 
 **未提及的字段留空**，由后续事件动态填充，禁止 LLM 编造。
 
-### 事件（EventPatch）—— 不是日志，是状态补丁
+#### 事件（EventPatch）—— 不是日志，是状态补丁
 
 ```yaml
 Event:
@@ -74,7 +85,7 @@ Event:
     required_agents: [character, world]
 ```
 
-### 世界（World）—— 不是场景描述，是仲裁者
+#### 世界（World）—— 不是场景描述，是仲裁者
 
 - **物理状态**：位置、物品、环境规则（代码层强制，不走 LLM）
 - **规则引擎**：验证所有 `world_delta`，拒绝不合物理/社会规则的申请
@@ -82,9 +93,7 @@ Event:
 
 ---
 
-## 双模式运行
-
-AURA 暴露 OpenAI-compatible API，对前端零改造接入。
+## 双模式设计
 
 ### Mode A：Prompt 编译器（TAVO / ST 兼容）
 
@@ -114,79 +123,47 @@ Player Input → Director（场域快照 + 提及解析 + NPC 调度）
 
 ---
 
-## SillyTavern 生态兼容
+## 如何参与
 
-AURA 不试图取代 ST，而是让 ST 的存量资产（角色卡、世界书）获得**原生不支持的能力**：
+**不需要写代码也可以帮忙。**
 
-- **ST 角色卡导入**：PNG/JSON 直接解析，自动填充八层定义
-- **世界书转换**：Lorebook Entry → 世界规则 + 叙事锚点
-- **图片解析**：本地 VLM（Qwen2.5-VL / MiniCPM-V）或云端 API（用户自填 Key）提取存在层描述
-- **双向兼容**：Aura 补完的暗线、张力、轨迹可导出为扩展格式
+- **分享痛点**：你在 ST/CAI 里遇到的最恶心的 OOC 场景是什么？我们需要真实测试用例。
+- **审架构**：八层人物定义对你的 RP 风格来说，有没有漏掉什么关键维度？
+- **给场景**：如果你有"多角色绝对不能串戏"的跑团经历，把细节分享给我们。
+- **设计 critique**：我们特别需要反馈的是事件总线的 Visibility 规则和世界 Agent 的仲裁逻辑。
 
-**关键差异**：ST 的角色卡是"静态面具"，导入 AURA 后成为"可演进的生命体"——跨会话保留状态，经历事件后人格偏移。
+**开发者：**
+- 见 [ROADMAP.md](./ROADMAP.md) 了解当前任务
+- 见 [docs/](./docs/) 查看架构文档
+- 欢迎提 PR，尤其是：
+  - Mode A 质量校验层（越权检测、文风过滤）
+  - ST 角色卡导入器（PNG 元数据解析 → 八层 JSON）
+  - YAML cartridge 格式校验器
 
 ---
 
-## 快速开始
-
-### 环境要求
-
-- Python 3.10+
-- 8GB+ RAM（推荐）
-- LLM API Key（DeepSeek / Kimi / Gemini，用户自填）
-
-### 安装
+## 快速体验（当前骨架）
 
 ```bash
 git clone https://github.com/hbbtsk/AURA.git
 cd AURA
 pip install -r requirements.txt
-```
 
-### 配置
+# 配置 API Key
+echo "DEEPSEEK_API_KEY=sk-your-key" > .env
 
-创建 `.env`：
-
-```env
-# 至少配置一个 LLM 后端
-DEEPSEEK_API_KEY=sk-your-deepseek-key
-KIMI_API_KEY=sk-your-kimi-key
-
-# 可选：超时与降级
-LLM_MAIN_TTFB_TIMEOUT=3
-LLM_MAIN_FALLBACK_PROVIDER=kimi
-```
-
-### 启动
-
-```bash
+# 启动 Mode A（Prompt 编译器）
 python -m app.main
-# 服务运行于 http://localhost:8000
+# 然后接入 TAVO: http://localhost:8000/v1/chat/completions
 ```
 
-### 接入 TAVO（Mode A）
-
-| 设置 | 值 |
-|------|-----|
-| API URL | `http://localhost:8000/v1/chat/completions` |
-| API Key | 任意值（AURA 不校验，TAVO 要求必填） |
-| Model | `deepseek-v4-flash` / `kimi-k2.6` / `gemini-2.0-flash` |
-
-### 运行世界（Mode B）
-
-```bash
-curl -X POST http://localhost:8000/v1/world/completions   -H "Content-Type: application/json"   -d '{
-    "message": "Hello, Weiss.",
-    "cartridge": "rwby_beacon",
-    "model": "deepseek-v4-flash"
-  }'
-```
+**⚠️ 注意**：当前版本是骨架。能跑，但效果不一定比原生 ST 好。我们在验证架构，不是发布产品。
 
 ---
 
-## Cartridge 系统（.aura）
+## Cartridge 系统（.aura）—— 设计预览
 
-自包含的世界数据包：
+自包含的世界数据包（格式已锁定，加载器待开发）：
 
 ```
 rwby_beacon.aura/
@@ -200,7 +177,7 @@ rwby_beacon.aura/
 └── assets/            # 可选资源索引
 ```
 
-Director 自动激活当前场域内的实体——无需关键词匹配。
+Director 将自动激活当前场域内的实体——无需关键词匹配。
 
 ---
 
@@ -222,11 +199,12 @@ Director 自动激活当前场域内的实体——无需关键词匹配。
 
 | 阶段 | 重点 | 状态 |
 |------|------|------|
-| **v1.0.x** | Prompt 编译器：LangGraph 状态机、3 层记忆、质量校验 | ✅ 稳定 |
-| **v1.1.x** | 世界平台：元模型、Cartridge 系统、Director、NPC Agent | 🚧 骨架 |
+| **v0.9.x** | Prompt 编译器：单角色深度优化，ST 兼容 | 🚧 骨架可跑 |
+| **v1.0.x** | 质量校验层：越权检测、文风过滤、长度控制 | 📋 开发中 |
+| **v1.1.x** | 世界平台：元模型、Cartridge 系统、Director、NPC Agent | 📋 架构已验证，代码待实现 |
 | **v1.2.x** | 因果引擎：Kuzu 图数据库、因果链遍历、CausalRAG | 📋 计划 |
 | **v1.3.x** | 事件涌现：EventEngine、PacingEngine、PerturbationEngine | 📋 计划 |
-| **v1.4.x** | 多 Agent 并发：NPC 并行 LLM 调用、冲突检测、离线模拟 | 📋 计划 |
+| **v1.4.x** | 多 Agent 并发：NPC 并行 LLM 调用、冲突检测 | 📋 计划 |
 
 ---
 

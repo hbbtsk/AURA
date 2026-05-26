@@ -2,41 +2,52 @@
   <a href="README.zh.md">🇨🇳 中文</a>
 </p>
 
-<h1 align="center">AURA</h1>
+<h1 align="center">AURA 🚧</h1>
 
 <p align="center">
-  <strong>Open-source, privately deployable AI narrative engine</strong><br>
-  Event Bus × Character State Machine × 8-Layer Character Definition<br>
-  Give your SillyTavern cards memory, trauma, and growth arcs
+  <strong>⚠️ This is not a ready-to-use product. It is an architecture validation project.</strong><br><br>
+  We are building an <strong>event-driven narrative engine with character state machines</strong>.<br>
+  Architecture validated. Implementation in progress.<br>
+  ST-compatible frontend, private deployment, bring-your-own-key.
 </p>
 
 ---
 
-## Not Another API Proxy
+## Why This Project
 
 SillyTavern and TAVO are excellent frontends, but they bet everything on the LLM's context window. After 20 rounds: OOC, character bleeding, state regression, style pollution. These aren't Prompt problems—they're **architecture problems**. No state layer means no consistency.
 
-AURA inserts a **deterministic narrative layer** between your frontend and the LLM:
+**The hypothesis we are validating**: If we insert a deterministic layer of "event bus + state machine" between the frontend and the LLM, can characters truly possess memory, trauma, and growth arcs?
 
-| Pain Point | Legacy Fix (Prompt Hacks) | AURA (State Machine) |
-|------------|--------------------------|---------------------|
-| Character amnesia after 20 turns | Summary compression | **Event Bus persistence + RAG retrieval** |
-| Multi-character crosstalk | Single-prompt group chat, one brain split | **Independent NPC Agents, state exchange via events** |
-| State regression (pregnant→not→pregnant) | LLM probability drift | **World Agent arbitration, immutable snapshots** |
-| Style pollution / lock-in | Model training artifacts | **8-layer definition locks speech fingerprint** |
-| Inner monologue leakage | LLM reads all context | **Visibility fields: private events don't broadcast** |
-| Player lines overwritten by LLM | Prompt begging "don't write for user" | **JSON Schema output + rule engine guard** |
-| Output too long / too short | Temperature tuning | **Structured output + hard length caps, no retry** |
-
-**In one sentence**: ST is a "mask warehouse"; AURA is "bones and nervous system."
+If you have ever experienced a beloved RP character suddenly forgetting your shared history, or two NPCs in a group chat sounding like the same person, you understand the pain we are trying to solve.
 
 ---
 
-## Core Architecture: Character · Event · World
+## Current Status
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| **Event Bus Design** | ✅ Validated | Data model, causality chain, visibility mechanism defined |
+| **8-Layer Character Model** | ✅ Validated | Physique / Voice / Roots / Network / Core / Tension / Trajectory / Hooks |
+| **Mode A: Prompt Compiler** | 🚧 Skeleton runnable | Can connect to TAVO; basic 3-layer memory; quality guards WIP |
+| **Mode B: World Platform** | 📋 Design stage | Director + NPC Agent architecture documented, code pending |
+| **ST Card Importer** | 📋 Pending | PNG/JSON parsing, 8-layer auto-population |
+| **Causal Engine** | 📋 Pending | Kuzu graph DB, long-arc narrative tracking |
+| **Local VLM Integration** | 📋 Pending | Qwen2.5-VL / MiniCPM-V for image-to-physique |
+
+**Estimated Availability**
+- Mode A stable: 2026 Q3
+- Mode B prototype: 2026 Q4
+
+---
+
+## What We Are Validating
+
+### Target Architecture: Character · Event · World
 
 AURA's narrative logic rests on three structured entities—not chat logs, but **state diffs + causal chains + rule arbitration**.
 
-### Character (Entity) — Not a card, a living system
+#### Character (Entity) — Not a card, a living system
 
 Import a SillyTavern card and AURA parses it into **8 layers**:
 
@@ -51,7 +62,7 @@ Import a SillyTavern card and AURA parses it into **8 layers**:
 
 **Empty fields stay empty**. LLM hallucination is blocked; later events or user edits fill gaps dynamically.
 
-### Event (EventPatch) — Not a log, a state patch
+#### Event (EventPatch) — Not a log, a state patch
 
 ```yaml
 Event:
@@ -74,7 +85,7 @@ Event:
     required_agents: [character, world]
 ```
 
-### World — Not scene description, an arbiter
+#### World — Not scene description, an arbiter
 
 - **Physical state**: Locations, items, environmental rules (code-enforced, no LLM)
 - **Rule engine**: Validates every `world_delta`; rejects physically/socially impossible requests
@@ -82,9 +93,7 @@ Event:
 
 ---
 
-## Dual-Mode Operation
-
-AURA exposes an OpenAI-compatible API for zero-retrofit frontend integration.
+## Dual-Mode Design
 
 ### Mode A: Prompt Compiler (TAVO / ST Compatible)
 
@@ -114,79 +123,47 @@ Player Input → Director (field snapshot + mention resolution + NPC scheduling)
 
 ---
 
-## SillyTavern Ecosystem Compatible
+## How to Participate
 
-AURA doesn't replace ST—it gives ST's existing assets capabilities ST will never have:
+**You don't need to write code to help.**
 
-- **ST card import**: PNG/JSON direct parsing, auto-populating 8-layer definitions
-- **Lorebook conversion**: Lorebook entries → world rules + narrative anchors
-- **Image parsing**: Local VLM (Qwen2.5-VL / MiniCPM-V) or cloud API (user-provided key) extracts physique descriptions
-- **Bidirectional compatibility**: Aura-completed dark threads, tensions, and trajectories export to extended formats
+- **Share pain points**: What is the most disgusting OOC scene you've experienced in ST/CAI? We need real test cases.
+- **Review architecture**: Does the 8-layer character model miss anything critical for your RP style?
+- **Share scenarios**: If you have a TTRPG experience where "multiple characters must not crosstalk," tell us the details.
+- **Design critique**: We are especially looking for feedback on the Event Bus visibility rules and the World Agent arbitration logic.
 
-**Key difference**: ST cards are "static masks"; imported into AURA they become "evolving organisms"—state persists across sessions, personality drifts after trauma.
+**For developers:**
+- See [ROADMAP.md](./ROADMAP.md) for current tasks
+- See [docs/](./docs/) for architecture documents
+- PRs welcome, especially for:
+  - Mode A quality guard layer (overreach detection, style filter)
+  - ST card importer (PNG metadata parser → 8-layer JSON)
+  - YAML cartridge format validator
 
 ---
 
-## Quick Start
-
-### Requirements
-
-- Python 3.10+
-- 8GB+ RAM (recommended)
-- LLM API Key (DeepSeek / Kimi / Gemini, user-provided)
-
-### Install
+## Quick Experience (Current Skeleton)
 
 ```bash
 git clone https://github.com/hbbtsk/AURA.git
 cd AURA
 pip install -r requirements.txt
-```
 
-### Configure
+# Configure API Key
+echo "DEEPSEEK_API_KEY=sk-your-key" > .env
 
-Create `.env`:
-
-```env
-# At least one LLM backend
-DEEPSEEK_API_KEY=sk-your-deepseek-key
-KIMI_API_KEY=sk-your-kimi-key
-
-# Optional: timeout and fallback
-LLM_MAIN_TTFB_TIMEOUT=3
-LLM_MAIN_FALLBACK_PROVIDER=kimi
-```
-
-### Run
-
-```bash
+# Start Mode A (Prompt Compiler)
 python -m app.main
-# Service runs at http://localhost:8000
+# Then connect TAVO to: http://localhost:8000/v1/chat/completions
 ```
 
-### Connect TAVO (Mode A)
-
-| Setting | Value |
-|---------|-------|
-| API URL | `http://localhost:8000/v1/chat/completions` |
-| API Key | Any value (AURA does not validate; TAVO requires it) |
-| Model | `deepseek-v4-flash` / `kimi-k2.6` / `gemini-2.0-flash` |
-
-### Run a World (Mode B)
-
-```bash
-curl -X POST http://localhost:8000/v1/world/completions   -H "Content-Type: application/json"   -d '{
-    "message": "Hello, Weiss.",
-    "cartridge": "rwby_beacon",
-    "model": "deepseek-v4-flash"
-  }'
-```
+**⚠️ Note**: The current version is a skeleton. It runs, but the effect may not be better than native ST yet. We are validating architecture, not shipping a product.
 
 ---
 
-## Cartridge System (.aura)
+## Cartridge System (.aura) — Design Preview
 
-Self-contained world data packages:
+Self-contained world data packages (format locked, loader pending):
 
 ```
 rwby_beacon.aura/
@@ -200,7 +177,7 @@ rwby_beacon.aura/
 └── assets/            # Optional resource index
 ```
 
-The Director automatically activates entities present in the field—no keyword matching required.
+The Director will automatically activate entities present in the field—no keyword matching required.
 
 ---
 
@@ -222,11 +199,12 @@ The Director automatically activates entities present in the field—no keyword 
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **v1.0.x** | Prompt Compiler: LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
-| **v1.1.x** | World Platform: Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
+| **v0.9.x** | Prompt Compiler: Single-character depth optimization, ST compatible | 🚧 Skeleton runnable |
+| **v1.0.x** | Quality Guard: Overreach detection, style filter, length control | 📋 In development |
+| **v1.1.x** | World Platform: Meta-models, cartridge system, Director, NPC Agent | 📋 Architecture validated, code pending |
 | **v1.2.x** | Causal Engine: Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
 | **v1.3.x** | Event Emergence: EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
-| **v1.4.x** | Multi-Agent Concurrency: Parallel NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
+| **v1.4.x** | Multi-Agent Concurrency: Parallel NPC LLM calls, conflict detection | 📋 Planned |
 
 ---
 
