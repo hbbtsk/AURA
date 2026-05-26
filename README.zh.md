@@ -1,8 +1,14 @@
-# AURA
+<p align="center">
+  <a href="README.md">🇺🇸 English</a>
+</p>
 
-> **开源、可私有化部署的 AI 互动叙事引擎**  
-> 事件总线 × 角色状态机 × 八层人物定义  
-> 让 SillyTavern 的角色卡真正拥有记忆、创伤与成长
+<h1 align="center">AURA</h1>
+
+<p align="center">
+  <strong>开源、可私有化部署的 AI 互动叙事引擎</strong><br>
+  事件总线 × 角色状态机 × 八层人物定义<br>
+  让 SillyTavern 的角色卡真正拥有记忆、创伤与成长
+</p>
 
 ---
 

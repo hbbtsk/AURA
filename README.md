@@ -1,54 +1,129 @@
-# AURA
+<p align="center">
+  <a href="README.zh.md">🇨🇳 中文</a>
+</p>
 
-**Agentic Unified Roleplay Assistant**
+<h1 align="center">AURA</h1>
 
-AURA is a dual-mode AI narrative engine that bridges front-end RP platforms (like TAVO) with LLM backends. It operates as both a **Prompt Compiler** (optimizing roleplay interactions) and a **Text Adventure Platform** (running immersive worlds with Director + NPC Agent architecture).
-
----
-
-## What is AURA?
-
-AURA sits between your RP frontend and the LLM backend, solving 15+ systematic pain points in long-form roleplay sessions. Unlike simple API proxies, AURA:
-
-- **Decomposes** chaotic TAVO System Prompts into structured 9-block prompts
-- **Retrieves** context via 3-layer memory (Working + Recent + Long-term RAG)
-- **Guards** output quality with automated checks (overreach, style pollution, length)
-- **Falls back** to backup models when the primary LLM times out
-- **Runs worlds** via Director/NPC Agent architecture for true text adventure gameplay
+<p align="center">
+  <strong>Open-source, privately deployable AI narrative engine</strong><br>
+  Event Bus × Character State Machine × 8-Layer Character Definition<br>
+  Give your SillyTavern cards memory, trauma, and growth arcs
+</p>
 
 ---
 
-## Dual-Mode Architecture
+## Not Another API Proxy
 
-AURA operates in two distinct modes, accessible via different API endpoints:
+SillyTavern and TAVO are excellent frontends, but they bet everything on the LLM's context window. After 20 rounds: OOC, character bleeding, state regression, style pollution. These aren't Prompt problems—they're **architecture problems**. No state layer means no consistency.
 
-### Mode A: TAVO Compatible (Prompt Compiler)
+AURA inserts a **deterministic narrative layer** between your frontend and the LLM:
 
-The original LangGraph state machine with 15 nodes:
+| Pain Point | Legacy Fix (Prompt Hacks) | AURA (State Machine) |
+|------------|--------------------------|---------------------|
+| Character amnesia after 20 turns | Summary compression | **Event Bus persistence + RAG retrieval** |
+| Multi-character crosstalk | Single-prompt group chat, one brain split | **Independent NPC Agents, state exchange via events** |
+| State regression (pregnant→not→pregnant) | LLM probability drift | **World Agent arbitration, immutable snapshots** |
+| Style pollution / lock-in | Model training artifacts | **8-layer definition locks speech fingerprint** |
+| Inner monologue leakage | LLM reads all context | **Visibility fields: private events don't broadcast** |
+| Player lines overwritten by LLM | Prompt begging "don't write for user" | **JSON Schema output + rule engine guard** |
+| Output too long / too short | Temperature tuning | **Structured output + hard length caps, no retry** |
+
+**In one sentence**: ST is a "mask warehouse"; AURA is "bones and nervous system."
+
+---
+
+## Core Architecture: Character · Event · World
+
+AURA's narrative logic rests on three structured entities—not chat logs, but **state diffs + causal chains + rule arbitration**.
+
+### Character (Entity) — Not a card, a living system
+
+Import a SillyTavern card and AURA parses it into **8 layers**:
+
+- **Physique**: Skeleton, marks, wear, traces, aura
+- **Voice**: Pace, tics, register, emotional baseline, silence habits, subtext patterns
+- **Roots**: Soil, rupture, livelihood, social mask, real standing
+- **Network**: Public ties, secret ties, debts, alliances, information position
+- **Core**: Surface desire, deep hunger, fear, wound, moral boundary, values
+- **Tension**: Internal contradictions, external friction, time pressure, identity crack
+- **Trajectory**: Life stage, recent turning point, current burdens, ticking bombs
+- **Hooks**: Entry style, catalyst events, chemistry with others, information nodes, narrative function
+
+**Empty fields stay empty**. LLM hallucination is blocked; later events or user edits fill gaps dynamically.
+
+### Event (EventPatch) — Not a log, a state patch
+
+```yaml
+Event:
+  header:
+    id: evt_042
+    type: utterance | action | state_change
+    causality:
+      triggered_by: evt_038   # direct trigger
+      root_cause: evt_001     # root cause tracking
+    visibility: public | private | faction_only
+  payload:
+    source: char_001
+    targets: [char_002]
+    content: "Where were you last night?"
+    intent_tags: [inquiry, pressure]
+    world_delta:
+      proposed_changes:
+        - {field: "char_002.psychological.stress", delta: +0.1}
+  routing:
+    required_agents: [character, world]
+```
+
+### World — Not scene description, an arbiter
+
+- **Physical state**: Locations, items, environmental rules (code-enforced, no LLM)
+- **Rule engine**: Validates every `world_delta`; rejects physically/socially impossible requests
+- **Causal graph**: `triggered_by` and `causes` links for long-arc narrative tracking
+
+---
+
+## Dual-Mode Operation
+
+AURA exposes an OpenAI-compatible API for zero-retrofit frontend integration.
+
+### Mode A: Prompt Compiler (TAVO / ST Compatible)
 
 ```
-TAVO → InputReceive → PromptDecomposer → [6 parallel prep nodes]
-  → ContextAssemble → LLMGenerate → ParallelQualityCheck
-  → [retry loop] → OutputReturn → MemoryExtract → TAVO
+TAVO → AURA → Prompt Decomposition → 3-Layer Memory → Quality Guard → LLM → Return
 ```
 
-**Endpoint:** `POST /v1/chat/completions`
+- 9-Block Prompt assembly (constraints + character slice + world slice + event context)
+- 3-layer memory: WORKING (5 turns) + RECENT (summaries) + LONG_TERM (RAG Top-5)
+- Lightweight filtering: overreach detection, style guard, length truncation (**no LLM retry**)
 
-Best for: Direct TAVO integration, single-character roleplay, prompt optimization.
+**Endpoint**: `POST /v1/chat/completions`
 
-### Mode B: World Platform (Text Adventure Engine)
-
-The new Director + NPC Agent architecture:
+### Mode B: World Platform (Multi-Agent Narrative)
 
 ```
 Player Input → Director (field snapshot + mention resolution + NPC scheduling)
-  → NPC Agent (independent System Prompt + LLM call per character)
-  → Director Arbitration → Player Response
+  → NPC Agent (independent System Prompt + single LLM call per character)
+  → Director Arbitration → Merged Output
 ```
 
-**Endpoint:** `POST /v1/world/completions`
+- Each NPC owns an independent state machine; exchanges information via Event Bus
+- Director handles physical arbitration, conflict resolution, focus scheduling
+- Supports cartridge loading (`.aura` format) for complete world imports
 
-Best for: Multi-character narrative worlds, persistent state, emergent storytelling.
+**Endpoint**: `POST /v1/world/completions`
+
+---
+
+## SillyTavern Ecosystem Compatible
+
+AURA doesn't replace ST—it gives ST's existing assets capabilities ST will never have:
+
+- **ST card import**: PNG/JSON direct parsing, auto-populating 8-layer definitions
+- **Lorebook conversion**: Lorebook entries → world rules + narrative anchors
+- **Image parsing**: Local VLM (Qwen2.5-VL / MiniCPM-V) or cloud API (user-provided key) extracts physique descriptions
+- **Bidirectional compatibility**: Aura-completed dark threads, tensions, and trajectories export to extended formats
+
+**Key difference**: ST cards are "static masks"; imported into AURA they become "evolving organisms"—state persists across sessions, personality drifts after trauma.
 
 ---
 
@@ -58,9 +133,9 @@ Best for: Multi-character narrative worlds, persistent state, emergent storytell
 
 - Python 3.10+
 - 8GB+ RAM (recommended)
-- LLM API Keys (DeepSeek, Kimi, or Gemini)
+- LLM API Key (DeepSeek / Kimi / Gemini, user-provided)
 
-### Installation
+### Install
 
 ```bash
 git clone https://github.com/hbbtsk/AURA.git
@@ -68,44 +143,39 @@ cd AURA
 pip install -r requirements.txt
 ```
 
-### Configuration
+### Configure
 
-Create a `.env` file:
+Create `.env`:
 
-```bash
-# Required: at least one LLM backend
+```env
+# At least one LLM backend
 DEEPSEEK_API_KEY=sk-your-deepseek-key
 KIMI_API_KEY=sk-your-kimi-key
 
-# Optional: fallback configuration
-LLM_MAIN_TTFB_TIMEOUT=3          # First-token timeout (seconds)
-LLM_MAIN_FALLBACK_PROVIDER=kimi  # Backup model on timeout
+# Optional: timeout and fallback
+LLM_MAIN_TTFB_TIMEOUT=3
+LLM_MAIN_FALLBACK_PROVIDER=kimi
 ```
 
 ### Run
 
 ```bash
 python -m app.main
+# Service runs at http://localhost:8000
 ```
 
-Service runs at `http://localhost:8000`.
-
 ### Connect TAVO (Mode A)
-
-In TAVO's custom API settings:
 
 | Setting | Value |
 |---------|-------|
 | API URL | `http://localhost:8000/v1/chat/completions` |
-| API Key | Any value (AURA does not validate, but TAVO requires it) |
+| API Key | Any value (AURA does not validate; TAVO requires it) |
 | Model | `deepseek-v4-flash` / `kimi-k2.6` / `gemini-2.0-flash` |
 
-### Play a World (Mode B)
+### Run a World (Mode B)
 
 ```bash
-curl -X POST http://localhost:8000/v1/world/completions \
-  -H "Content-Type: application/json" \
-  -d '{
+curl -X POST http://localhost:8000/v1/world/completions   -H "Content-Type: application/json"   -d '{
     "message": "Hello, Weiss.",
     "cartridge": "rwby_beacon",
     "model": "deepseek-v4-flash"
@@ -116,7 +186,7 @@ curl -X POST http://localhost:8000/v1/world/completions \
 
 ## Cartridge System (.aura)
 
-AURA's world platform uses **cartridges** — self-contained world data packages:
+Self-contained world data packages:
 
 ```
 rwby_beacon.aura/
@@ -126,142 +196,11 @@ rwby_beacon.aura/
 │   ├── weiss_schnee.yaml
 │   └── ruby_rose.yaml
 ├── locations/         # Spatial structure + connectivity
-│   ├── beacon_academy_gate.yaml
-│   └── dormitory.yaml
 ├── events/            # Seed events (causal chains)
-│   └── opening.yaml
-└── assets/            # Optional resource indices
+└── assets/            # Optional resource index
 ```
 
-Characters are defined via the **Meta-Model**:
-
-- **Identity** — Who they are (name, race, motivation, speech fingerprint)
-- **Habitus** — Conditional behavior mappings ("when X, tend to Y")
-- **State** — Ephemeral condition (location, emotion, relationships, memory)
-
-The Director automatically activates entities present in the field — no keyword matching needed.
-
----
-
-## Core Features
-
-| Feature | Description | Mode |
-|---------|-------------|------|
-| **Prompt Decomposition** | 3-tier parsing (marked/HTML/fallback) of chaotic TAVO prompts | A |
-| **9-Block Prompt Assembly** | Structured SYSTEM prompt with constraints, character card, memory layers | A |
-| **3-Layer Memory** | WORKING (5 rounds) + RECENT (10 summaries) + LONG_TERM (RAG Top-5) | A |
-| **Intent-Aware RAG v2** | 6-dimensional structured search with field-level embedding + composite scoring | A |
-| **LLM Fallback** | Auto-switch to backup model on first-token timeout (default 3s) | A/B |
-| **Quality Guard** | Overreach detection + style pollution filter + length control | A |
-| **Director Orchestration** | Field rendering, mention resolution, rule checking, NPC scheduling | B |
-| **NPC Agent** | Independent System Prompt + LLM call per character, memory-filtered field slice | B |
-| **Cartridge Loader** | YAML-to-Pydantic parser with multi-language alias support | B |
-| **World State Manager** | Atomic EventPatch application, checkpoint save/load | B |
-
----
-
-## Meta-Model
-
-AURA's world platform is built on three interconnected meta-models:
-
-### Entity (Character)
-```python
-class Entity(BaseModel):
-    identity: Identity       # DNA — immutable
-    habitus: Habitus         # Conditional behavior patterns
-    location_id: str         # Current position
-    emotion: EmotionalState  # Narrative emotional condition
-    relationships: dict      # Per-target relation narratives
-    memory: Memory           # Known events + secrets
-```
-
-### Event (World Patch)
-```python
-class EventPatch(BaseModel):
-    event_id: str
-    state_diffs: list        # Attribute changes per entity
-    emotional_impacts: list  # Narrative emotional deltas
-    caused_by: list          # Parent event IDs
-    causes: list             # Child event IDs
-    narrative_text: str      # Natural language for LLM consumption
-```
-
-### World (Container)
-```python
-class World(BaseModel):
-    locations: dict          # Spatial graph with travel times
-    entities: dict           # All characters
-    events: dict             # Causal event graph
-    rules: list              # Hard world constraints
-    open_loops: list         # Unresolved event IDs
-```
-
----
-
-## Project Structure
-
-```
-AURA/
-├── app/
-│   ├── main.py                 # FastAPI entry point
-│   │
-│   ├── api/                    # API layer
-│   │   ├── router.py           # Pydantic models + routing
-│   │   ├── streaming.py        # SSE streaming simulation
-│   │   └── completions.py      # /chat/completions + /world/completions
-│   │
-│   ├── core/                   # Core business logic
-│   │   ├── config.py           # Centralized config (scene-isolated)
-│   │   ├── intent_tagger.py    # Intent parser
-│   │   └── prompt_decomposer.py# Prompt decomposer
-│   │
-│   ├── graph/                  # LangGraph orchestration (Mode A)
-│   │   ├── state.py            # AgentState definition
-│   │   ├── workflow.py         # StateGraph builder
-│   │   └── nodes/              # 14 node implementations
-│   │
-│   ├── memory/                 # Memory management
-│   │   ├── manager.py          # Memory Facade
-│   │   ├── faiss_store.py      # FAISS vector search
-│   │   ├── sqlite_store.py     # SQLite structured storage
-│   │   └── summarizer.py       # Dialogue summarization
-│   │
-│   ├── models/                 # Meta-models (Mode B)
-│   │   ├── entity.py           # Entity, Identity, Habitus, etc.
-│   │   ├── event.py            # EventPatch, StateChange, etc.
-│   │   └── world.py            # World, Location, WorldRule, etc.
-│   │
-│   ├── cartridge/              # Cartridge system (Mode B)
-│   │   ├── loader.py           # YAML → Pydantic parser
-│   │   └── validator.py        # Consistency checker
-│   │
-│   ├── world/                  # World runtime (Mode B)
-│   │   └── runtime.py          # WorldRuntime + checkpointing
-│   │
-│   ├── director/               # Director (Mode B)
-│   │   └── director.py         # Field snapshot, scheduling, arbitration
-│   │
-│   ├── npc/                    # NPC Agent (Mode B)
-│   │   └── agent.py            # Per-character LLM calls
-│   │
-│   ├── causal/                 # Causal engine (stub)
-│   └── engine/                 # Event/Pacing/Perturbation engines (stub)
-│
-├── cartridges/                 # Example world cartridges
-│   └── rwby_beacon/
-│       ├── meta.yaml
-│       ├── world.yaml
-│       ├── entities/
-│       ├── locations/
-│       └── events/
-│
-├── ROADMAP.md                  # Vision & roadmap (English)
-├── ROADMAP.zh.md               # 愿景与路线图 (中文)
-├── docs/
-│   ├── vscode-guide.md         # VSCode quick start (English)
-│   └── vscode-guide.zh.md      # VSCode 启动指南 (中文)
-└── requirements.txt
-```
+The Director automatically activates entities present in the field—no keyword matching required.
 
 ---
 
@@ -270,34 +209,34 @@ AURA/
 | Layer | Technology |
 |-------|-----------|
 | API Gateway | FastAPI + Pydantic v2 + Uvicorn |
-| LLM Client | httpx (direct API calls) |
+| LLM Client | httpx (direct) |
 | Orchestration (Mode A) | LangGraph + LangChain Core |
-| Vector Memory | FAISS (IndexFlatL2) + sentence-transformers (bge-small-zh-v1.5) |
+| Vector Memory | FAISS + sentence-transformers |
 | Structured Storage | SQLite |
 | Meta-Models | Pydantic v2 |
 | Cartridge Format | YAML |
 
 ---
 
-## Development Roadmap
+## Roadmap
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **v1.0.x** | Prompt Compiler — LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
-| **v1.1.x** | World Platform — Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
-| **v1.2.x** | Causal Engine — Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
-| **v1.3.x** | Event Emergence — EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
-| **v1.4.x** | Multi-Agent — Concurrent NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
+| **v1.0.x** | Prompt Compiler: LangGraph state machine, 3-layer memory, quality guards | ✅ Stable |
+| **v1.1.x** | World Platform: Meta-models, cartridge system, Director, NPC Agent | 🚧 Skeleton |
+| **v1.2.x** | Causal Engine: Kuzu graph DB, causal chain traversal, CausalRAG | 📋 Planned |
+| **v1.3.x** | Event Emergence: EventEngine, PacingEngine, PerturbationEngine | 📋 Planned |
+| **v1.4.x** | Multi-Agent Concurrency: Parallel NPC LLM calls, conflict detection, offline simulation | 📋 Planned |
 
 ---
 
 ## Design Philosophy
 
-1. **Text is root** — Narrative logic is the sole carrier. Images/music are presentation layers.
-2. **State-driven** — Entities activate by presence, not keyword matching.
-3. **Causality first** — Events are state diffs + causal links, not logs.
-4. **Anti-template** — Consistency guards boundaries, not sentence structures.
-5. **Player brings API keys** — The platform does not bear model inference costs.
+1. **Text is root**: Narrative logic is the sole carrier; images/audio are presentation layers
+2. **State-driven**: Entities activate by presence, not keyword matching
+3. **Causality first**: Events are state diffs + causal links, not logs
+4. **Anti-template**: Consistency guards boundaries, not sentence structures
+5. **Player brings API keys**: The platform does not bear model inference costs; data never leaves the user's domain
 
 ---
 
@@ -309,4 +248,6 @@ MIT
 
 ## Acknowledgements
 
-Built for the RWBY universe and beyond. The first cartridge (`rwby_beacon`) features Weiss Schnee and Ruby Rose at Beacon Academy's entrance — a homage to where it all began.
+Built for the RWBY universe and beyond.  
+The first cartridge, `rwby_beacon`, features Weiss Schnee and Ruby Rose at Beacon Academy's entrance—a homage to where it all began.  
+AURA's cartridge system is open to any fictional universe or TTRPG module. PRs welcome.
