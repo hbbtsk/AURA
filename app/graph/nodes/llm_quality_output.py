@@ -79,10 +79,16 @@ async def _call_single_llm(
     }
     url = f"{llm_config.base_url.rstrip('/')}/chat/completions"
 
+    # 使用 llm_config 中的实际模型名（覆盖 payload 中可能不兼容的模型名）
+    # 同时 temperature 已在 get_llm_config 中按模型修正
+    actual_payload = dict(payload)
+    actual_payload["model"] = llm_config.model
+    actual_payload["temperature"] = llm_config.temperature
+
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(timeout, read=timeout)
     ) as client:
-        response = await client.post(url, headers=headers, json=payload)
+        response = await client.post(url, headers=headers, json=actual_payload)
 
     if response.status_code != 200:
         err = response.text[:500]
@@ -144,21 +150,31 @@ async def llm_generate_node(state: "AgentState") -> "AgentState":
             f"[LLMGenerate] 主模型 {primary_backend} 首 token 超时 "
             f"({settings.llm_main_ttfb_timeout}s)，触发故障转移 → {settings.llm_main_fallback_provider}"
         )
+    except Exception as e:
+        # 连接错误、配置错误等非超时异常也触发 fallback，避免直接暴露给用户
+        fallback_triggered = True
+        fallback_reason = f"exception: {primary_backend} | {type(e).__name__}: {e}"
+        logger.warning(
+            f"[LLMGenerate] 主模型 {primary_backend} 调用异常，触发故障转移 → "
+            f"{settings.llm_main_fallback_provider} | 异常: {type(e).__name__}: {e}"
+        )
 
-    # ---------- 第二轮：fallback 模型（若主模型超时） ----------
+    # ---------- 第二轮：fallback 模型（若主模型失败） ----------
     if fallback_triggered:
         fallback_backend = settings.llm_main_fallback_provider
+        # fallback 时使用 fallback 后端的默认模型，避免把原模型名透传给不支持的后端
+        fallback_model = None  # _call_single_llm 内部会取 get_llm_config 的默认模型
         try:
             llm_data, error_msg = await _call_single_llm(
                 fallback_backend,
-                model_name,
+                fallback_model,
                 payload,
                 timeout=settings.llm_main_timeout,
             )
             actual_backend = fallback_backend
         except Exception as e:
             logger.exception(f"[LLMGenerate] fallback 模型 {fallback_backend} 调用失败")
-            error_msg = f"主模型超时且 fallback 失败: {e}"
+            error_msg = f"主模型失败且 fallback 失败: {e}"
             actual_backend = fallback_backend
 
     # ---------- 错误处理 ----------

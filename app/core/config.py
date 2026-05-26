@@ -62,9 +62,13 @@ class Settings(BaseSettings):
     # ========== 场景参数：主对话（main） ==========
     llm_main_temperature: float = 0.7
     llm_main_max_tokens: int = 4096
-    llm_main_timeout: int = 60          # 总超时（HTTP 连接+读取）
-    llm_main_ttfb_timeout: int = 3      # 首 token 超时（秒）：超过此时间未收到任何响应则触发 fallback
+    llm_main_timeout: int = 120         # 总超时（HTTP 连接+读取），大 prompt 需要更长
+    llm_main_ttfb_timeout: int = 15     # 首 token 超时（秒）：大 prompt 推理慢，适当放宽
     llm_main_fallback_provider: str = "kimi"  # 主模型 ttfb 超时后的备用后端
+
+    # ========== 模型级 temperature 映射（部分模型对 temperature 有限制） ==========
+    # 格式: "模型名:温度值"，用逗号分隔。未在此列出的模型使用场景默认值。
+    model_temperature_map: str = "kimi-k2.6:1,deepseek-v4-flash:0.7,deepseek-v4-pro:0.7"
 
     # ========== 场景参数：记忆总结（summary） ==========
     llm_summary_temperature: float = 0.3
@@ -118,28 +122,39 @@ def get_llm_config(provider: str = None, scene: str = "main", model_name: str = 
         max_tokens = 2048
         timeout = 30
 
+    # 解析模型级 temperature 映射
+    _model_temp_map = {}
+    for entry in settings.model_temperature_map.split(","):
+        if ":" in entry:
+            m, t = entry.split(":", 1)
+            _model_temp_map[m.strip()] = float(t.strip())
+
     if provider == "deepseek":
         if not settings.deepseek_api_key:
             logger.warning("[Config] DeepSeek API密钥未配置，返回 None")
             return None
+        actual_model = model_name or settings.deepseek_model
+        actual_temp = _model_temp_map.get(actual_model, temperature)
         return LLMConfig(
             base_url=settings.deepseek_base_url,
             api_key=settings.deepseek_api_key,
-            model=model_name or settings.deepseek_model,
+            model=actual_model,
             max_tokens=max_tokens,
-            temperature=temperature,
+            temperature=actual_temp,
             timeout=timeout,
         )
     elif provider == "gemini":
         if not settings.gemini_api_key:
             logger.warning("[Config] Gemini API密钥未配置，返回 None")
             return None
+        actual_model = model_name or settings.gemini_model
+        actual_temp = _model_temp_map.get(actual_model, temperature)
         return LLMConfig(
             base_url=settings.gemini_base_url,
             api_key=settings.gemini_api_key,
-            model=model_name or settings.gemini_model,
+            model=actual_model,
             max_tokens=max_tokens,
-            temperature=temperature,
+            temperature=actual_temp,
             timeout=timeout,
         )
     elif provider == "kimi":
@@ -148,15 +163,16 @@ def get_llm_config(provider: str = None, scene: str = "main", model_name: str = 
             return None
         # 用户指定型号优先；未指定时使用 settings 默认值
         actual_model = model_name or settings.kimi_model
-        # 意图分析场景用快速版（无 reasoning），但仅在用户未显式指定型号时切换
+        # 意图分析场景也使用 k2.6（turbo-preview 已不可用）
         if scene == "intent" and model_name is None:
-            actual_model = "kimi-k2-turbo-preview"
+            actual_model = settings.kimi_model
+        actual_temp = _model_temp_map.get(actual_model, temperature)
         return LLMConfig(
             base_url=settings.kimi_base_url,
             api_key=settings.kimi_api_key,
             model=actual_model,
             max_tokens=max_tokens,
-            temperature=temperature,
+            temperature=actual_temp,
             timeout=timeout,
         )
     else:
