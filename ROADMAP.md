@@ -1,261 +1,129 @@
-# AURA — Vision & Roadmap
+# AURA Roadmap
 
-> **AURA is a text adventure platform, not a chat tool.**
-> The host is a game console; the cartridge is a game world.
-> The director directs actors; rules constrain emergence.
-> Players experience freedom within determinism, and logic within freedom.
+> **This is a technical evolution plan, not a product release schedule.**  
+> We are building an event-driven narrative engine. The roadmap shows how the architecture deepens from "single-character prompt optimization" to "multi-agent persistent world simulation."
 
 ---
 
-## 1. Project Vision
+## Phase 0: Architecture Validation (Current)
 
-AURA is an LLM-powered text adventure platform — a **"livable text world"** where players enter, interact with AI-driven NPCs, push the plot forward, and the world itself keeps running according to physical rules and character personalities.
+**Status**: 🚧 In Progress  
+**Goal**: Prove that "event bus + state machine" solves problems that pure Prompt engineering cannot.
 
-### Core Form: Host + Cartridge
+| Module | Deliverable | State |
+|--------|-------------|-------|
+| Event Bus Data Model | EventPatch schema, causality fields, visibility rules | ✅ Validated |
+| 8-Layer Character Model | Physique/Voice/Roots/Network/Core/Tension/Trajectory/Hooks definition | ✅ Validated |
+| Prompt Compiler Skeleton | LangGraph 15-node workflow, TAVO API compatibility | 🚧 Runnable |
+| 3-Layer Memory | WORKING + RECENT + LONG_TERM RAG | 🚧 Basic |
 
-- **Host (AURA Runtime)**: A semi-open-source narrative engine. Content-agnostic. Handles world simulation, causal computation, consistency checks, LLM routing, and cartridge management.
-- **Cartridge (.aura)**: Creator-made world/character/script data packages. YAML-based, Pydantic-validated.
-- **Player brings their own API key**: The platform does not bear model inference costs.
-
-### Dual-Mode Architecture
-
-| Mode | Endpoint | Architecture | Purpose |
-|------|----------|--------------|---------|
-| **A — Prompt Compiler** | `POST /v1/chat/completions` | LangGraph 14-node state machine | TAVO-compatible RP optimization |
-| **B — World Platform** | `POST /v1/world/completions` | Director + NPC Agent | Multi-character text adventure |
-
-Mode A is the foundation. Mode B is the evolution. Both share the same LLM calling infrastructure; Mode B injects structured world data into Mode A's Prompt compiler as a new data source.
+**Milestone for Phase 0 Complete**:  
+A single-character RP session through AURA shows measurable consistency improvement over raw ST (same card, same model, 20+ turns) in a controlled test.
 
 ---
 
-## 2. Core Philosophy
+## Phase 1: Quality Guard Layer (v1.0.x)
 
-### The Triad Loop
+**Status**: 📋 Next  
+**Goal**: Make Mode A (Prompt Compiler) production-usable for solo RP.
 
-```
-Entity (人) — driven by Habitus in an objective Field
-    ↓
-Event (事件) — state diffs that feed back into people and the world
-    ↓
-World (世界) — physical rules and spatial structure provide new conditions
-    ↓
-Back to Entity — memory updates, emotional shifts, relationship evolution
-```
+| Feature | Technical Approach | Why It Matters |
+|---------|-------------------|----------------|
+| Overreach Detection | Regex + JSON Schema post-filter, no LLM retry | Prevents model from writing user lines |
+| Style Pollution Filter | Voice-layer fingerprint matching against baseline | Catches model drift back to training-data prose |
+| Length Guard | Hard min/max tokens + template fallback | Stops model from rambling or giving one-word replies |
+| Intent Tagger v2 | Lightweight classifier (local 7B or embedding) | Replaces heuristic intent parsing with structured tags |
+| ST Card Importer | PNG metadata parser → 8-layer JSON population | Bridges existing ST ecosystem to AURA state model |
 
-### Design Principles
-
-1. **Text is root** — Narrative logic is the sole carrier. Images/music are presentation-layer enhancements. Do not touch them until the text layer is 100% stable.
-2. **State-driven** — Entities activate by presence (`WorldField.present_entities`), not keyword matching. No trigger keywords needed.
-3. **Causality first** — Events are state-diff patches + causal links, not logs.
-4. **Event-driven** — Reject time-driven tick systems. The world advances only when events happen.
-5. **Narrative emotions** — Emotions and relationships are expressed in natural language, not numerical scores.
-6. **Determinism before probability** — The rule layer (world editor) must be 100% deterministic; the generation layer (LLM) produces probabilistic output within rules.
-7. **Anti-template** — Consistency guards boundaries (no OOC, no teleportation), not tracks (no prescribed sentence structures).
-8. **No root, no perturbation** — Dramatic surprises come only from field mutations with physical causes, not random injection.
+**Milestone**: User can import a ST card, run a 30-turn session, and observe fewer OOC incidents than native ST with the same backend model.
 
 ---
 
-## 3. Meta-Model
+## Phase 2: World Platform Foundation (v1.1.x)
 
-### 3.1 Entity (Character)
+**Status**: 📋 Architecture validated, code pending  
+**Goal**: Move from "one character + user" to "multiple characters + world rules."
 
-Three-layer structure:
+| Component | Responsibility |
+|-----------|--------------|
+| Director | Field snapshot rendering, mention resolution, NPC scheduling, conflict arbitration |
+| NPC Agent | Per-character System Prompt + isolated LLM call, memory-filtered field slice |
+| World State Manager | Atomic EventPatch application, checkpoint save/load, physical rule enforcement |
+| Cartridge Loader | YAML → Pydantic parser, consistency validation, multi-language alias support |
 
-| Layer | Class | Immutable? | Description |
-|-------|-------|-----------|-------------|
-| **Existence** | `Identity` | ✅ | DNA: `entity_id`, `name`, `race`, `core_motivation`, `speech_fingerprint`, `aliases` |
-| **Practice** | `Habitus` | ✅ | Conditional behavior mappings: `Tendency[]` + `default_behavior` + `stress_response` |
-| **Emergence** | `State` | ❌ | Temporary: `location_id`, `EmotionalState`, `relationships`, `memory` |
+**Key Technical Challenge**:  
+Concurrent NPC LLM calls (2-3 characters responding to the same event) without exponential token cost. Solution: shared context retrieval + per-agent prompt slicing.
 
-**Key insight**: `Habitus` is not a personality trait — it is a set of condition-behavior mappings. "When at the gate with Ruby → protect her despite cold words." This is what drives emergent events.
-
-### 3.2 Event (World Patch)
-
-An event is **not a log**. It is:
-- A set of `StateChange` diffs
-- A set of `EmotionalImpact` narratives
-- Causal links (`caused_by` / `causes` / `activates` / `closes`)
-- Visibility permissions (`public_to` / `secret_to` / `hidden_from`)
-
-Events are applied atomically via `World.apply_patch(event)`.
-
-### 3.3 World (Container)
-
-- `Location` — spatial graph with travel times and properties
-- `WorldRule` — hard constraints with scope and exception events
-- `WorldField` — snapshot of objective conditions at a given moment
-- `World` — the runtime container; all mutations go through `EventPatch`
+**Milestone**: A 3-character scene (player + 2 NPCs) runs for 10 turns without crosstalk, with NPCs referencing each other's prior statements correctly.
 
 ---
 
-## 4. Runtime Architecture: Director + Actors
+## Phase 3: Causal Engine (v1.2.x)
 
-### Director (God View)
+**Status**: 📋 Planned  
+**Goal**: Make long-arc narrative coherent across sessions.
 
-- Renders the ambient field (weather, sound, light)
-- Checks rules: does this action violate a `WorldRule`?
-- Schedules NPCs: who should react this round?
-- Broadcasts results to NPCs — filtered by memory permissions
-- Arbitrates outputs: detects conflicts, sorts by dramatic weight, inserts narration
+| Feature | Approach |
+|---------|----------|
+| Causal Graph Storage | Kuzu graph database for `triggered_by` / `causes` links |
+| CausalRAG | Retrieve not just "similar events" but "causally related events" |
+| Root Cause Tracking | Every event knows its ultimate origin; prevents plot regression |
+| Session Checkpoint | Save world state + event graph; resume exactly where left off |
 
-### NPC Agent (Character View)
-
-- Knows only what's in `memory.known_events`
-- Has its own `Identity + Habitus + State` injected into an independent System Prompt
-- Calls LLM independently (reuses Mode A's `_call_single_llm`)
-- Cannot read other characters' memories
-
-### Single Round Flow
-
-```
-Player Input
-    ↓
-Director resolves mentions (Alias matching)
-    ↓
-Director updates WorldField, checks rules
-    ↓
-Director schedules NPCs (who is present, who should react)
-    ↓
-Director prepares per-NPC field slices (memory-filtered)
-    ↓
-Each NPC Agent calls LLM independently
-    ↓
-Director arbitrates outputs → assembles final response
-    ↓
-Atomic EventPatch commit
-    ↓
-Stream response to player
-```
+**Milestone**: A mystery plotline spanning 5 sessions (50+ turns total) maintains clue consistency; red herrings don't accidentally become true, true clues don't disappear.
 
 ---
 
-## 5. Key Engines
+## Phase 4: Event Emergence (v1.3.x)
 
-### Implemented ✅
+**Status**: 📋 Planned  
+**Goal**: The world generates events without direct player input.
 
-| Engine | Status | Description |
-|--------|--------|-------------|
-| **PromptDecomposer** | ✅ | 3-tier parsing (`=====` / HTML comments / format fallback) |
-| **ContextAssemble** | ✅ | 9-block Prompt assembly with model-specific constraints |
-| **LLMGenerate** | ✅ | Non-streaming call with primary→fallback failover (3s ttfb timeout) |
-| **FormatGuard** | ✅ | Overreach detection + style pollution filter + length check |
-| **IntentTagger** | ✅ | Lightweight LLM pre-call for implicit instruction extraction |
-| **FAISS RAG** | ✅ | Semantic + structured-field + time-weighted composite scoring |
-| **MemoryManager** | ✅ | SQLite + FAISS facade with summarization every 5 rounds |
-| **CartridgeLoader** | ✅ | YAML → Pydantic parser with multi-language name resolution |
-| **WorldRuntime** | ✅ | World state manager with checkpoint save/load |
-| **Director** | 🟡 Skeleton | Field snapshot, mention resolution, NPC scheduling (mock), arbitration (mock) |
-| **NPCAgent** | 🟡 Skeleton | Independent System Prompt + LLM call per character |
+| Engine | Function |
+|--------|----------|
+| EventEngine | NPCs schedule off-screen actions based on goals and state |
+| PacingEngine | Monitors narrative tension; injects lulls or escalations |
+| PerturbationEngine | Random world events (weather, news, accidents) that force character reactions |
 
-### Planned 📋
-
-| Engine | Priority | Description |
-|--------|----------|-------------|
-| **CausalRAG** | High | Graph DB (Kuzu/NetworkX) traversal: upstream 2 layers + downstream 1 layer |
-| **EventEngine** | High | `Habitus × Field + Perturbation` → EventDraft generation |
-| **PacingEngine** | Medium | Four-state pacing (起承转合) based on open_loop count and chain depth |
-| **PerturbationEngine** | Medium | Detects long-suppressed causal chains and releases accumulated potential |
-| **EventScheduler** | Medium | Offline NPC autonomous emergence; offline summary on player return |
-| **Deep FormatGuard** | Medium | WorldRule violation check, spatial consistency (no teleportation), Habitus boundary check |
-| **ModelDialectCompiler** | Low | Per-model prompt format optimization (DeepSeek/Gemini/Kimi/Qwen) |
-| **Multi-Agent Concurrency** | Low | Parallel NPC LLM calls with conflict detection |
+**Milestone**: Player logs in after 24h real time; 2-3 "off-screen events" have occurred, changing NPC emotional states and available conversation topics.
 
 ---
 
-## 6. Cartridge System (.aura)
+## Phase 5: Multi-Agent Concurrency (v1.4.x)
 
-```
-example_world.aura/
-├── meta.yaml          # Title, author, version, dependencies
-├── world.yaml         # Global rules + initial state + open loops
-├── entities/          # Character definitions (Identity + Habitus + State)
-├── locations/         # Spatial structure + connectivity
-├── events/            # Seed events (causal chain starters)
-└── assets/            # Optional resource indices
-```
+**Status**: 📋 Planned  
+**Goal**: Scale to 5+ simultaneous NPCs with meaningful group dynamics.
 
-**Cartridge = Database**: Deserialized into Pydantic models at runtime.
-**Cartridge = Save**: World state diffs written back to `save/` on exit.
-**Cartridge = Product**: Creators package and upload to a marketplace.
+| Problem | Solution |
+|---------|----------|
+| Exponential LLM cost | Batch context retrieval; shared field snapshot; selective NPC activation |
+| Conflict detection | When two NPCs propose contradictory world_deltas, Director arbitrates by priority + timestamp |
+| Offline simulation | NPCs continue "living" in background threads, generating events while player is away |
 
-### Multi-Language Support
-
-- `aliases: {en: [...], zh: [...], ja: [...]}` — cross-language coreference resolution
-- `name`, `core_motivation`, `speech_fingerprint` support per-language values
-- Runtime loads the player's language; falls back to English if missing
+**Milestone**: A tavern scene with 5 NPCs + player; NPCs have sidebar conversations, eavesdrop, interrupt, or ignore player based on attention filters.
 
 ---
 
-## 7. Storage Architecture
+## How to Contribute
 
-| Layer | Data | Tool | Status |
-|-------|------|------|--------|
-| **Causal (graph)** | Event nodes + causal edges | Kuzu / NetworkX | ❌ Not yet integrated |
-| **Real-time (cache)** | NPC current states | SQLite / JSON | ✅ SQLite tables exist |
-| **Semantic (vector)** | `narrative_text` embeddings | FAISS (IndexFlatL2) | ✅ Active |
+**Phase 0-1** (Immediate needs):
+- Quality guard implementation (Python, regex, JSON Schema)
+- ST card importer (PNG metadata parsing, YAML generation)
+- Benchmark suite: define "OOC score" and measure AURA vs baseline
 
----
+**Phase 2+** (Architecture-heavy):
+- Director scheduling algorithm design
+- Kuzu graph schema for causal storage
+- Event emergence rule system
 
-## 8. Development Roadmap
-
-### Phase 0 — Foundation (v1.0.x → v1.0.0) ✅ Completed
-
-- [x] LangGraph 14-node state machine
-- [x] Prompt decomposition + 9-block assembly
-- [x] 3-layer memory (Working/Recent/Long-term)
-- [x] Intent-aware RAG with structured field matching
-- [x] Multi-backend LLM with failover
-- [x] Meta-models (Entity/Event/World) as Pydantic classes
-- [x] Cartridge loader + validator
-- [x] Director skeleton + NPC Agent skeleton
-- [x] Example cartridge: `rwby_beacon` (Weiss & Ruby)
-
-### Phase 1 — Graph & Causality (v1.1.x → v1.2.x)
-
-- [ ] Integrate Kuzu or NetworkX for causal graph storage
-- [ ] Replace FAISS pure-vector search with CausalRAG (graph traversal + vector fallback)
-- [ ] EventEngine: generate EventDraft from `Habitus × Field`
-- [ ] Atomic EventPatch application with conflict detection
-- [ ] Deep FormatGuard: WorldRule + spatial consistency checks
-
-### Phase 2 — Emergence & Pacing (v1.2.x → v1.3.x)
-
-- [ ] PacingEngine: four-state narrative rhythm control
-- [ ] PerturbationEngine: detect and release suppressed causal potential
-- [ ] EventScheduler: offline NPC autonomous behavior
-- [ ] Multi-Agent concurrency: parallel LLM calls for all active NPCs
-
-### Phase 3 — Polish & Ecosystem (v1.4.x)
-
-- [ ] ModelDialectCompiler: per-model prompt optimization
-- [ ] Branching timelines: save checkpoints at key decision points
-- [ ] Cartridge marketplace foundation
-- [ ] Visual world editor (AURA Pro)
-
-### Phase 4 — Scale
-
-- [ ] Multiplayer: multiple players in the same world instance
-- [ ] Cloud sync: world state persistence across devices
-- [ ] Creator economy: paid cartridges, revenue sharing
+See open Issues for tagged tasks: `good first issue`, `help wanted`, `architecture discussion`.
 
 ---
 
-## 9. Design Iron Laws
+## Design Principles Driving the Roadmap
 
-1. **Text is root**
-2. **Ruby first, then abstract** — Build concrete, then generalize
-3. **State-driven** — No keyword matching
-4. **Causality first** — Events drive the world, not ticks
-5. **Event-driven** — No time-driven tick system
-6. **No root, no perturbation**
-7. **Narrative emotions** — No numerical scoring
-8. **Anti-template** — Guard boundaries, not tracks
-9. **Firmware before cartridges** — The host must be solid before the content shines
-
----
-
-## 10. The Origin
-
-> *"Even if the world forgets the character's oath, AURA will remember it for them."*
-
-The first cartridge, `rwby_beacon`, places Weiss Schnee and Ruby Rose at the gates of Beacon Academy on enrollment day — a homage to where it all began.
+1. **State before text**: Physical/psychological state changes are computed by rules; LLM only handles cognitive layer.
+2. **Causality before similarity**: RAG retrieves by causal chain first, embedding similarity second.
+3. **No LLM retry**: Output guards filter or truncate, never ask LLM to regenerate.
+4. **Player brings keys**: We don't host models; we host architecture.
+5. **Text is root**: All narrative logic is inspectable, diffable, and version-controllable.
