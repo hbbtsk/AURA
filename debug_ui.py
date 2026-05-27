@@ -233,9 +233,9 @@ with gr.Blocks(title="AURA 维测系统") as demo:
                 ],
             )
 
-            # 自动刷新（每 2 秒）—— 使用 demo.load 兼容 Gradio 4.x/5.x
-            # 首次加载页面时自动触发，之后每 2 秒刷新一次
-            demo.load(
+            # 自动刷新（每 2 秒）—— 使用 gr.Timer（Gradio 6.x）
+            auto_refresh_timer = gr.Timer(value=DEFAULT_REFRESH_INTERVAL, active=True)
+            auto_refresh_timer.tick(
                 fn=auto_refresh_latest,
                 inputs=[],
                 outputs=[
@@ -245,7 +245,6 @@ with gr.Blocks(title="AURA 维测系统") as demo:
                     role_states_box,
                     status_text,
                 ],
-                every=DEFAULT_REFRESH_INTERVAL,
             )
 
         # ======================== 历史回溯 ========================

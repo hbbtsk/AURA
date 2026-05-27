@@ -20,6 +20,9 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化（含 MemoryManager）
     await initialize_aura()
+    # 初始化维测数据库
+    from app.debug import init_db
+    init_db()
     yield
 
 # 创建FastAPI应用
@@ -42,6 +45,10 @@ app.add_middleware(
 # 注册路由
 from app.api import router as aura_router
 app.include_router(aura_router, prefix="/v1")
+
+# 注册调试路由
+from app.debug.routes import debug_router
+app.include_router(debug_router, prefix="/debug")
 
 # 健康检查端点
 @app.get("/health")

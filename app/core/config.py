@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # ========== 场景参数：意图分析（intent） ==========
     llm_intent_temperature: float = 0.3  # 意图分析用低 temperature 保证一致性
     llm_intent_max_tokens: int = 1024  # 意图分析输出很小，不需要太多 token
-    llm_intent_timeout: int = 15  # 非 reasoning 模型，15 秒足够
+    llm_intent_timeout: int = 30  # 放宽到 30 秒（Kimi ttfb 波动较大）
 
     # ========== 记忆总结 ==========
     memory_summary_interval: int = 5  # 每 N 轮对话触发一次记忆总结

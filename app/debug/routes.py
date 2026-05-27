@@ -15,7 +15,8 @@ AURA 维测系统 — FastAPI 调试路由
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from app.debug.recorder import get_latest_snapshot, get_snapshots_list, get_snapshot_by_event_id
 
@@ -32,7 +33,10 @@ debug_router = APIRouter(tags=["debug"])
 def _build_snapshot_response(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """将数据库行转换为 API 响应格式。"""
     if row is None:
-        raise HTTPException(status_code=404, detail="未找到快照")
+        return JSONResponse(
+            status_code=404,
+            content={"error": "未找到快照"},
+        )
 
     return {
         "event_id": row.get("event_id"),
