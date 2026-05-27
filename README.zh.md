@@ -316,7 +316,9 @@ python -m app.main
 
 ## 许可证
 
-MIT
+Apache-2.0
+
+AURA 采用 Apache License 2.0 开源许可证。你可以自由使用、修改和分发本软件，包括商业用途。详见 [LICENSE](./LICENSE) 文件。
 
 ---
 
