@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURA 观测台 — 三元组维测</title>
+<style>
+:root {
+    --bg-0: #0d1117;
+    --bg-1: #161b22;
+    --bg-2: #1c2128;
+    --bg-3: #21262d;
+    --border: #30363d;
+    --border-hover: #484f58;
+    --fg: #c9d1d9;
+    --fg-bright: #e6edf3;
+    --fg-dim: #8b949e;
+    --fg-dark: #484f58;
+    --accent: #7B6D8D;
+    --accent-light: #B8A9C9;
+    --ok: #5b8c5a;
+    --warn: #c4a35a;
+    --alert: #c4715b;
+    --info: #6B8CBB;
+    --font-mono: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: var(--bg-0);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ===== Header ===== */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 20px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    height: 48px;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-logo { display: flex; align-items: center; gap: 8px; }
+.aura-icon { width: 24px; height: 24px; background: linear-gradient(135deg, var(--accent), var(--accent-light)); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: var(--bg-0); }
+.header-logo h1 { font-size: 15px; font-weight: 600; color: var(--fg-bright); letter-spacing: 0.3px; }
+.header-meta { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--fg-dim); }
+.meta-item { display: flex; align-items: center; gap: 6px; }
+.meta-item .label { color: var(--fg-dark); }
+.meta-item .value { color: var(--fg); font-family: var(--font-mono); font-size: 11px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.status-badge { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; font-size: 11px; background: rgba(91, 140, 90, 0.1); color: var(--ok); border: 1px solid rgba(91, 140, 90, 0.2); }
+.status-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ===== Nav ===== */
+.nav { display: flex; gap: 0; padding: 0 20px; background: var(--bg-1); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.nav button { padding: 10px 20px; background: transparent; color: var(--fg-dim); border: none; cursor: pointer; font-size: 12px; font-weight: 500; border-bottom: 2px solid transparent; transition: all 0.2s ease; }
+.nav button:hover { color: var(--fg); background: rgba(123, 109, 141, 0.05); }
+.nav button.active { color: var(--accent-light); border-bottom-color: var(--accent); background: rgba(123, 109, 141, 0.08); }
+
+/* ===== Content ===== */
+.content { flex: 1; overflow: hidden; position: relative; }
+.tab-view { display: none; height: 100%; overflow-y: auto; padding: 12px 20px; }
+.tab-view.active { display: block; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 4px; }
+
+/* ===== 三元组布局 ===== */
+.tri-layout { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.tri-upper { display: grid; grid-template-columns: 1fr 400px; gap: 10px; flex: 1; min-height: 0; overflow: hidden; }
+.tri-upper-left, .tri-upper-right { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; padding-right: 4px; }
+.tri-lower { flex-shrink: 0; }
+
+/* ===== 卡片 ===== */
+.card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: border-color 0.2s; flex-shrink: 0; }
+.card:hover { border-color: var(--border-hover); }
+.card-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; user-select: none; transition: background 0.15s; }
+.card-header:hover { background: rgba(255,255,255,0.02); }
+.card-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.card-icon { width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+.card-title { font-size: 12px; font-weight: 600; color: var(--fg-bright); white-space: nowrap; flex-shrink: 0; }
+.card-subtitle { font-size: 11px; color: var(--fg-dim); margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.card-toggle { color: var(--fg-dark); font-size: 10px; transition: transform 0.2s; flex-shrink: 0; margin-left: 8px; }
+.card-body { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; }
+.card.expanded .card-body { max-height: 2000px; transition: max-height 0.35s ease-in; }
+.card.expanded .card-toggle { transform: rotate(180deg); }
+.card-content { padding: 0 12px 12px; }
+
+/* ===== 人物：8层网格 ===== */
+.layer-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.layer-item { background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.layer-item-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.layer-name { font-size: 10px; font-weight: 600; color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.5px; }
+.layer-status { font-size: 10px; }
+.layer-status.ok { color: var(--ok); }
+.layer-status.warn { color: var(--warn); }
+.layer-value { font-size: 12px; color: var(--fg); line-height: 1.4; }
+.layer-bar { height: 3px; background: var(--bg-3); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.layer-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+/* ===== 形容词标签 ===== */
+.level-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.level-none   { background: rgba(72,79,88,0.2);   color: var(--fg-dark); }
+.level-low    { background: rgba(107,140,187,0.15); color: var(--info); }
+.level-mid    { background: rgba(196,163,90,0.15);  color: var(--warn); }
+.level-high   { background: rgba(196,113,91,0.15);  color: var(--alert); }
+.level-extreme{ background: rgba(196,113,91,0.25);  color: var(--alert); border: 1px solid rgba(196,113,91,0.3); }
+
+/* 信任度专用 */
+.trust-hostile  { background: rgba(196,113,91,0.25); color: var(--alert); border: 1px solid rgba(196,113,91,0.3); }
+.trust-distrust { background: rgba(196,113,91,0.15); color: var(--alert); }
+.trust-cautious { background: rgba(196,163,90,0.15);  color: var(--warn); }
+.trust-basic    { background: rgba(107,140,187,0.15); color: var(--info); }
+.trust-deep     { background: rgba(91,140,90,0.15);   color: var(--ok); }
+.trust-absolute { background: rgba(91,140,90,0.25);   color: var(--ok); border: 1px solid rgba(91,140,90,0.3); }
+
+/* ===== Delta表格 ===== */
+.delta-table { width: 100%; font-size: 11px; border-collapse: collapse; }
+.delta-table th { text-align: left; padding: 5px 6px; color: var(--fg-dark); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.delta-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.03); font-size: 11px; }
+.delta-field { color: var(--accent-light); }
+.delta-before { color: var(--fg-dim); }
+.delta-arrow { color: var(--fg-dark); padding: 0 4px; }
+.delta-after { color: var(--fg-bright); font-weight: 600; }
+.delta-pos { color: var(--ok); }
+.delta-neg { color: var(--alert); }
+.delta-zero { color: var(--fg-dark); }
+.delta-reason { color: var(--fg-dark); font-size: 10px; }
+
+/* ===== LLM输出 ===== */
+.llm-narrative { font-size: 13px; line-height: 1.7; color: var(--fg-bright); padding: 10px 12px; background: var(--bg-0); border-radius: 6px; border-left: 3px solid var(--accent); margin-bottom: 10px; }
+.code-block { background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+.code-block .key { color: var(--accent-light); }
+.code-block .str { color: var(--ok); }
+.code-block .num { color: var(--info); }
+.llm-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.llm-meta-item { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.llm-meta-label { color: var(--fg-dark); }
+.llm-meta-value { font-family: var(--font-mono); color: var(--fg); }
+
+/* ===== Tag ===== */
+.tag { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+.tag-purple { background: rgba(123, 109, 141, 0.15); color: var(--accent-light); border: 1px solid rgba(123, 109, 141, 0.2); }
+.tag-green { background: rgba(91, 140, 90, 0.15); color: var(--ok); border: 1px solid rgba(91, 140, 90, 0.2); }
+.tag-yellow { background: rgba(196, 163, 90, 0.15); color: var(--warn); border: 1px solid rgba(196, 163, 90, 0.2); }
+.tag-red { background: rgba(196, 113, 91, 0.15); color: var(--alert); border: 1px solid rgba(196, 113, 91, 0.2); }
+.tag-blue { background: rgba(107, 140, 187, 0.15); color: var(--info); border: 1px solid rgba(107, 140, 187, 0.2); }
+
+/* ===== 关系列表 ===== */
+.rel-section { margin-bottom: 10px; }
+.rel-section:last-child { margin-bottom: 0; }
+.rel-section-title { font-size: 10px; color: var(--fg-dark); font-weight: 600; margin-bottom: 5px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.rel-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.rel-name { font-size: 11px; color: var(--fg); min-width: 70px; flex-shrink: 0; }
+.rel-type { font-size: 10px; color: var(--accent-light); background: rgba(123,109,141,0.12); padding: 1px 7px; border-radius: 3px; border: 1px solid rgba(123,109,141,0.2); white-space: nowrap; }
+.rel-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+
+/* ===== LLM调用链路 ===== */
+.chain-step { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.chain-step:last-child { margin-bottom: 0; }
+.chain-step-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg-0); border-bottom: 1px solid var(--border); }
+.chain-step-num { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--bg-0); font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.chain-step-title { font-size: 11px; font-weight: 600; color: var(--fg-bright); flex: 1; }
+.chain-step-meta { font-size: 10px; color: var(--fg-dark); white-space: nowrap; }
+.chain-step-body { padding: 8px 10px; background: var(--bg-1); }
+.memory-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
+.memory-score { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; flex-shrink: 0; min-width: 30px; text-align: center; }
+.memory-text { color: var(--fg); flex: 1; }
+.compress-before, .compress-after { font-size: 11px; color: var(--fg-dim); line-height: 1.5; padding: 6px 8px; background: var(--bg-0); border-radius: 4px; border: 1px solid var(--border); }
+.compress-after { color: var(--fg-bright); border-color: var(--ok); }
+.compress-arrow { text-align: center; font-size: 10px; color: var(--fg-dark); padding: 3px 0; }
+.intent-row { display: flex; gap: 8px; padding: 3px 0; font-size: 11px; align-items: center; }
+.intent-key { color: var(--fg-dark); min-width: 56px; flex-shrink: 0; }
+.intent-val { color: var(--fg); flex: 1; }
+.prompt-section { margin-bottom: 6px; }
+.prompt-section:last-child { margin-bottom: 0; }
+.prompt-label { font-size: 9px; color: var(--accent-light); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.prompt-block { font-size: 11px; color: var(--fg); line-height: 1.5; padding: 6px 8px; background: var(--bg-0); border-radius: 4px; border-left: 2px solid var(--accent); font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+
+/* Metric */
+.metric-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.metric { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.metric-label { color: var(--fg-dark); }
+.metric-value { font-family: var(--font-mono); font-weight: 600; }
+.metric-value.ok { color: var(--ok); }
+
+/* ===== 事件区 ===== */
+.event-patch-card { background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+.event-id-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.event-id { font-family: var(--font-mono); font-size: 11px; color: var(--accent-light); }
+.event-type-badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: rgba(123, 109, 141, 0.15); color: var(--accent-light); border: 1px solid rgba(123, 109, 141, 0.2); }
+.event-kv { display: flex; flex-direction: column; gap: 5px; }
+.event-kv-item { display: flex; gap: 6px; font-size: 11px; }
+.event-kv-key { color: var(--fg-dark); min-width: 60px; flex-shrink: 0; }
+.event-kv-value { color: var(--fg); }
+
+/* 因果链 */
+.causal-chain { display: flex; flex-direction: column; gap: 0; position: relative; padding-left: 16px; }
+.causal-chain::before { content: ''; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+.chain-node { display: flex; align-items: center; gap: 8px; padding: 5px 0; position: relative; }
+.chain-node::before { content: ''; position: absolute; left: -13px; width: 8px; height: 8px; border-radius: 50%; background: var(--bg-3); border: 2px solid var(--border); }
+.chain-node.current::before { background: var(--accent); border-color: var(--accent-light); }
+.chain-node.root::before { background: var(--ok); border-color: var(--ok); }
+.chain-turn { font-family: var(--font-mono); font-size: 10px; color: var(--fg-dark); min-width: 28px; }
+.chain-text { font-size: 11px; color: var(--fg-dim); flex: 1; }
+.chain-node.current .chain-text { color: var(--fg-bright); font-weight: 500; }
+.chain-arrow { color: var(--fg-dark); font-size: 10px; padding-left: 3px; }
+
+/* ===== 世界区 ===== */
+.world-strip { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+.world-grid { display: grid; grid-template-columns: 1.2fr 1fr 0.7fr 1fr; gap: 12px; align-items: start; }
+.world-section { display: flex; flex-direction: column; gap: 4px; }
+.world-section-header { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--fg-bright); margin-bottom: 2px; }
+.world-section-header .icon { font-size: 12px; }
+.world-item { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
+.world-item .key { color: var(--fg-dark); }
+.world-item .value { color: var(--fg); }
+.world-item .value.alert { color: var(--alert); }
+.world-desc { margin-top: 4px; color: var(--fg-dark); font-size: 10px; line-height: 1.5; }
+.world-divider { width: 1px; background: var(--border); }
+.world-rule { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 2px 6px; border-radius: 3px; background: rgba(196, 163, 90, 0.1); color: var(--warn); border: 1px solid rgba(196, 163, 90, 0.15); margin-top: 2px; }
+
+/* ===== Footer ===== */
+.footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 20px; background: var(--bg-1); border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-dark); flex-shrink: 0; height: 32px; }
+
+@media (max-width: 1200px) {
+    .tri-upper { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<div class="header">
+    <div class="header-left">
+        <div class="header-logo">
+            <div class="aura-icon">A</div>
+            <h1>AURA 观测台</h1>
+        </div>
+        <div class="header-meta">
+            <div class="meta-item"><span class="label">会话</span><span class="value">测试_042</span></div>
+            <div class="meta-item"><span class="label">角色</span><span class="value">皮拉</span></div>
+            <div class="meta-item"><span class="label">轮次</span><span class="value">23 / 30</span></div>
+            <div class="meta-item"><span class="label">场景</span><span class="value" style="color:var(--warn)">审讯室</span></div>
+            <div class="meta-item"><span class="label">模型</span><span class="value">GPT-4o</span></div>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="status-badge"><div class="dot"></div><span>实时</span></div>
+    </div>
+</div>
+
+<!-- ═══════════════ NAV ═══════════════ -->
+<div class="nav">
+    <button class="active" data-tab="now" onclick="switchTab('now')">实时面板</button>
+    <button data-tab="timeline" onclick="switchTab('timeline')">时序面板</button>
+    <button data-tab="compare" onclick="switchTab('compare')">对比面板</button>
+    <button data-tab="engine" onclick="switchTab('engine')">引擎面板</button>
+</div>
+
+<!-- ═══════════════ CONTENT ═══════════════ -->
+<div class="content">
+
+<!-- ═══ TAB 1: 实时面板 ═══ -->
+<div class="tab-view active" id="tab-now">
+<div class="tri-layout">
+
+<!-- 上部：人物 + 事件 -->
+<div class="tri-upper">
+
+<!-- 左侧：人物 -->
+<div class="tri-upper-left">
+
+    <!-- 角色切换栏 -->
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;flex-shrink:0;">
+        <span style="font-size:11px;color:var(--fg-dark);white-space:nowrap;">当前角色</span>
+        <select id="char-select" onchange="switchChar(this.value)" style="flex:1;background:var(--bg-0);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;outline:none;">
+            <option value="player">玩家（你自己）</option>
+            <option value="pyrrha" selected>皮拉</option>
+            <option value="mentor">导师（雷恩）</option>
+            <option value="guard">守卫（未登场）</option>
+        </select>
+        <span id="char-role-badge" class="tag tag-purple" style="font-size:10px;padding:2px 6px;white-space:nowrap;">主角</span>
+    </div>
+
+    <!-- 8层摘要（默认展开） -->
+    <div class="card" id="card-layer" onclick="toggleCard('card-layer')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(123,109,141,0.2);color:var(--accent-light);">&#128100;</div>
+                <span class="card-title">人物</span>
+                <span class="card-subtitle">八层状态</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <div class="layer-grid">
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">一层 体格</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">红发，绿眼，修长体型</div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">二层 声纹</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">正式语域，语速中等</div>
+                        <div class="layer-bar"><div class="layer-bar-fill" style="width:94%;background:var(--ok)"></div></div>
+                        <div style="font-size:10px;color:var(--fg-dark);margin-top:2px">稳定度 <span class="level-tag tag-green" style="font-size:10px;padding:1px 5px;margin-left:4px">高</span></div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">三层 根源</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">孤儿院出身，被导师收养培养成特工</div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">四层 人际</span>
+                            <span class="layer-status warn">!</span>
+                        </div>
+                        <div class="layer-value">玩家：信任骤降 / 导师：深厚羁绊</div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">五层 核心</span>
+                            <span class="layer-status warn">!</span>
+                        </div>
+                        <div class="layer-value">
+                            <span class="level-tag trust-basic" style="font-size:11px;padding:2px 7px">基本信任</span>
+                            <span class="level-tag level-mid" style="font-size:11px;padding:2px 7px;margin-left:4px">压力中等</span>
+                            <span class="tag tag-yellow" style="font-size:10px;padding:1px 5px;margin-left:4px">警觉</span>
+                        </div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">六层 张力</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">想信任对方 vs 证据暗示撒谎</div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">七层 轨迹</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">从绝对信任者 → 怀疑 → 挣扎</div>
+                        <div style="font-size:10px;color:var(--fg-dark);margin-top:4px">弧线进度：第二幕中段</div>
+                    </div>
+                    <div class="layer-item">
+                        <div class="layer-item-header">
+                            <span class="layer-name">八层 钩子</span>
+                            <span class="layer-status ok">&#10003;</span>
+                        </div>
+                        <div class="layer-value">玩家的真实身份？导师隐瞒了什么？</div>
+                        <div style="font-size:10px;color:var(--fg-dark);margin-top:4px">未解伏笔：2个</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 关系（默认展开） -->
+    <div class="card" id="card-relation" onclick="toggleCard('card-relation')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(196,113,91,0.2);color:var(--alert);">&#128206;</div>
+                <span class="card-title">人物</span>
+                <span class="card-subtitle">关系</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content" id="relation-content">
+                <div class="rel-section">
+                    <div class="rel-section-title">皮拉 如何看待他人</div>
+                    <div class="rel-row"><span class="rel-name">玩家</span><span class="rel-type">情侣</span><span class="rel-tag trust-basic">基本信任</span><span class="rel-tag tag-yellow" style="font-size:10px;padding:1px 5px">动摇中</span></div>
+                    <div class="rel-row"><span class="rel-name">导师（雷恩）</span><span class="rel-type">养父女</span><span class="rel-tag trust-deep">深厚羁绊</span></div>
+                </div>
+                <div class="rel-section">
+                    <div class="rel-section-title">他人如何看待 皮拉</div>
+                    <div class="rel-row"><span class="rel-name">玩家</span><span class="rel-type">情侣</span><span class="rel-tag trust-distrust">信任骤降</span></div>
+                    <div class="rel-row"><span class="rel-name">导师（雷恩）</span><span class="rel-type">养父女</span><span class="rel-tag trust-deep">保护+愧疚</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 状态变更（默认折叠） -->
+    <div class="card" id="card-delta" onclick="toggleCard('card-delta')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(139,148,158,0.2);color:var(--delta-color);">&#916;</div>
+                <span class="card-title">人物</span>
+                <span class="card-subtitle">状态变更</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <table class="delta-table">
+                    <thead><tr><th>字段</th><th>变更</th><th>原因</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td class="delta-field">审讯室.紧张度</td>
+                            <td><span class="delta-before">较低</span><span class="delta-arrow">&#8594;</span><span class="delta-after">高</span> <span class="delta-pos">&#8593;</span></td>
+                            <td class="delta-reason">叙事提议：审讯压力上升</td>
+                        </tr>
+                        <tr>
+                            <td class="delta-field">玩家.压力值</td>
+                            <td><span class="delta-before">低</span><span class="delta-arrow">&#8594;</span><span class="delta-after">中等</span> <span class="delta-pos">&#8593;</span></td>
+                            <td class="delta-reason">叙事提议：被追问感到压力</td>
+                        </tr>
+                        <tr>
+                            <td class="delta-field">皮拉.信任度</td>
+                            <td><span class="delta-before">基本信任</span><span class="delta-arrow">&#8594;</span><span class="delta-after">基本信任</span> <span class="delta-zero">未变</span></td>
+                            <td class="delta-reason">规则引擎：信任度不因单轮追问改变</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM输出（默认折叠） -->
+    <div class="card" id="card-llm" onclick="toggleCard('card-llm')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(107,140,187,0.2);color:var(--llm-color);">&#128172;</div>
+                <span class="card-title">人物</span>
+                <span class="card-subtitle">叙事输出</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <div class="llm-narrative">
+                    <em style="color:var(--fg-dim)">*手指敲打着桌面，目光移向窗外*</em><br><br>
+                    "你昨晚回来得很晚。你到底去了哪里？"
+                </div>
+                <div class="code-block">{
+  <span class="key">"意图标签"</span>: [<span class="str">"质问"</span>, <span class="str">"施压"</span>],
+  <span class="key">"世界变更"</span>: [
+    {<span class="key">"字段"</span>: <span class="str">"审讯室.紧张度"</span>, <span class="key">"变化"</span>: <span class="num">+0.15</span>},
+    {<span class="key">"字段"</span>: <span class="str">"玩家.压力值"</span>, <span class="key">"变化"</span>: <span class="num">+0.10</span>}
+  ],
+  <span class="key">"可见性"</span>: <span class="str">"公开"</span>
+}</div>
+                <div class="llm-meta">
+                    <div class="llm-meta-item"><span class="llm-meta-label">模型</span><span class="llm-meta-value">GPT-4o</span></div>
+                    <div class="llm-meta-item"><span class="llm-meta-label">温度</span><span class="llm-meta-value">0.7</span></div>
+                    <div class="llm-meta-item"><span class="llm-meta-label">延迟</span><span class="llm-meta-value" style="color:var(--ok)">1.24秒</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+<!-- /左侧人物 -->
+
+<!-- 右侧：事件 -->
+<div class="tri-upper-right">
+
+    <!-- EventPatch（默认展开） -->
+    <div class="card" id="card-event" onclick="toggleCard('card-event')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(196,163,90,0.2);color:var(--fp-color);">&#9889;</div>
+                <span class="card-title">事件</span>
+                <span class="card-subtitle">事件补丁</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <div class="event-patch-card">
+                    <div class="event-id-row">
+                        <span class="event-id">事件_023</span>
+                        <span class="event-type-badge">对话</span>
+                    </div>
+                    <div class="event-kv">
+                        <div class="event-kv-item"><span class="event-kv-key">发起者</span><span class="event-kv-value">皮拉</span></div>
+                        <div class="event-kv-item"><span class="event-kv-key">目标</span><span class="event-kv-value">玩家</span></div>
+                        <div class="event-kv-item"><span class="event-kv-key">意图</span><span class="event-kv-value"><span class="tag tag-purple">质问</span> <span class="tag tag-purple">施压</span></span></div>
+                        <div class="event-kv-item"><span class="event-kv-key">可见性</span><span class="event-kv-value" style="color:var(--ok)">公开</span></div>
+                        <div class="event-kv-item"><span class="event-kv-key">世界影响</span><span class="event-kv-value">审讯室紧张度 <span style="color:var(--alert);font-weight:600">↑</span>，玩家压力 <span style="color:var(--alert);font-weight:600">↑</span></span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 因果链（默认展开） -->
+    <div class="card" id="card-causal" onclick="toggleCard('card-causal')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(91,140,90,0.2);color:var(--ok);">&#128279;</div>
+                <span class="card-title">事件</span>
+                <span class="card-subtitle">因果链</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <div class="causal-chain">
+                    <div class="chain-node root"><span class="chain-turn">第1轮</span><span class="chain-text">初次见面 — 建立信任基础</span></div>
+                    <div class="chain-arrow">&#8595;</div>
+                    <div class="chain-node"><span class="chain-turn">第5轮</span><span class="chain-text">帮助战斗 — 信任大增</span></div>
+                    <div class="chain-arrow">&#8595;</div>
+                    <div class="chain-node"><span class="chain-turn">第20轮</span><span class="chain-text" style="color:var(--alert)">被发现撒谎 — 信任暴跌</span></div>
+                    <div class="chain-arrow">&#8595;</div>
+                    <div class="chain-node"><span class="chain-turn">第21轮</span><span class="chain-text">主动道歉 — 信任略有恢复</span></div>
+                    <div class="chain-arrow">&#8595;</div>
+                    <div class="chain-node current"><span class="chain-turn" style="color:var(--accent-light);font-weight:600">第23轮</span><span class="chain-text" style="color:var(--fg-bright)">当前 — 审讯质问</span></div>
+                </div>
+                <div style="margin-top:8px;padding:8px 10px;background:rgba(196,113,91,0.05);border:1px solid rgba(196,113,91,0.15);border-radius:6px;">
+                    <div style="font-size:10px;color:var(--alert);font-weight:600;margin-bottom:3px">! 矛盾检测</div>
+                    <div style="font-size:11px;color:var(--fg-dim)">第20轮信任度暴跌后，第21轮仅略有恢复。规则引擎阻止了单轮进一步下降。</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 质量指标（默认折叠） -->
+    <div class="card" id="card-metric" onclick="toggleCard('card-metric')">
+        <div class="card-header">
+            <div class="card-header-left">
+                <div class="card-icon" style="background:rgba(91,140,90,0.2);color:var(--guard-color);">&#128202;</div>
+                <span class="card-title">质量指标</span>
+            </div>
+            <span class="card-toggle">&#9660;</span>
+        </div>
+        <div class="card-body">
+            <div class="card-content">
+                <div class="metric-row">
+                    <div class="metric"><span class="metric-label">风格稳定度</span><span class="metric-value ok">高 (0.94)</span></div>
+                    <div class="metric"><span class="metric-label">格式</span><span class="metric-value ok">正常 &#10003;</span></div>
+                    <div class="metric"><span class="metric-label">响应延迟</span><span class="metric-value ok">1.24秒</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+<!-- /右侧事件 -->
+
+</div>
+<!-- /上部 -->
+
+<!-- 下部：世界 -->
+<div class="tri-lower">
+    <div class="world-strip">
+        <div class="world-grid">
+            <div class="world-section">
+                <div class="world-section-header"><span class="icon">&#127758;</span> 场景</div>
+                <div class="world-item"><span class="key">标识：</span> <span class="value">审讯室</span></div>
+                <div class="world-item"><span class="key">名称：</span> <span class="value">安全屋审讯间</span></div>
+                <div class="world-desc">惨白灯光，金属桌椅，单向玻璃。压抑氛围。</div>
+            </div>
+            <div class="world-divider"></div>
+            <div class="world-section">
+                <div class="world-section-header"><span class="icon">&#9881;&#65039;</span> 物理状态</div>
+                <div class="world-item"><span class="key">灯光：</span> <span class="value">惨白 (强)</span></div>
+                <div class="world-item"><span class="key">温度：</span> <span class="value">偏低</span></div>
+                <div class="world-item"><span class="key">门锁：</span> <span class="value alert">已锁</span></div>
+            </div>
+            <div class="world-divider"></div>
+            <div class="world-section">
+                <div class="world-section-header"><span class="icon">&#128101;</span> 在场角色</div>
+                <div class="world-item"><span class="value">皮拉</span> <span class="tag tag-purple" style="font-size:9px;padding:1px 4px">审讯者</span></div>
+                <div class="world-item"><span class="value">玩家</span> <span class="tag tag-yellow" style="font-size:9px;padding:1px 4px">被审</span></div>
+            </div>
+            <div class="world-divider"></div>
+            <div class="world-section">
+                <div class="world-section-header"><span class="icon">&#128220;</span> 生效规则</div>
+                <div class="world-rule">信任度 &lt; 基本信任 &#8594; 警惕模式</div>
+                <div class="world-item" style="margin-top:4px"><span class="key">紧张度：</span> <span class="value alert">高</span></div>
+                <div class="world-item"><span class="key">氛围：</span> <span class="value alert">压抑</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- /下部世界 -->
+
+</div>
+</div>
+
+<!-- ═══ TAB 2: 时序面板 ═══ -->
+<div class="tab-view" id="tab-timeline">
+    <div style="padding:40px;text-align:center;color:var(--fg-dim)">
+        <div style="font-size:48px;margin-bottom:16px">&#128200;</div>
+        <div style="font-size:14px;margin-bottom:8px">时序面板</div>
+        <div style="font-size:12px">展示人物、事件、世界随轮次的变化趋势</div>
+    </div>
+</div>
+
+<!-- ═══ TAB 3: 对比面板 ═══ -->
+<div class="tab-view" id="tab-compare">
+    <div style="padding:40px;text-align:center;color:var(--fg-dim)">
+        <div style="font-size:48px;margin-bottom:16px">&#9878;&#65039;</div>
+        <div style="font-size:14px;margin-bottom:8px">对比面板</div>
+        <div style="font-size:12px">对比调整前后的人物、事件、世界差异</div>
+    </div>
+</div>
+
+<!-- ═══ TAB 4: 引擎面板 ═══ -->
+<div class="tab-view" id="tab-engine">
+<div style="padding:12px 20px;max-width:900px;margin:0 auto;">
+
+<!-- 轮次选择器 -->
+<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;flex-shrink:0;">
+    <span style="font-size:11px;color:var(--fg-dark);white-space:nowrap;">查看轮次</span>
+    <select id="turn-select" onchange="loadTurn(this.value)" style="flex:1;max-width:200px;background:var(--bg-0);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;outline:none;">
+        <option value="23">第23轮（当前）</option>
+        <option value="22">第22轮</option>
+        <option value="21">第21轮</option>
+        <option value="20">第20轮</option>
+        <option value="15">第15轮</option>
+        <option value="10">第10轮</option>
+        <option value="5">第5轮</option>
+        <option value="1">第1轮</option>
+    </select>
+    <span style="font-size:10px;color:var(--fg-dark);">共23轮 | 事件1,247 | 快照30</span>
+</div>
+
+<!-- 该轮次基础信息 -->
+<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">玩家输入</span><span style="color:var(--fg-bright)">"我可以解释..."</span></div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">皮拉输出</span><span style="color:var(--fg-bright)">*手指敲打桌面* "你到底去了哪里？"</span></div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">延迟</span><span style="color:var(--ok)">1.24秒</span></div>
+</div>
+
+<!-- 该轮次的对话记录 -->
+<div class="chain-step" style="margin-bottom:12px;">
+    <div class="chain-step-header"><span class="chain-step-num">&#128172;</span><span class="chain-step-title">第23轮对话</span></div>
+    <div class="chain-step-body">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;gap:8px;align-items:flex-start;">
+                <span style="font-size:10px;color:var(--info);font-weight:600;min-width:36px;">玩家</span>
+                <span style="font-size:12px;color:var(--fg);flex:1;">我可以解释...事情不是你想的那样。</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:flex-start;">
+                <span style="font-size:10px;color:var(--accent-light);font-weight:600;min-width:36px;">皮拉</span>
+                <span style="font-size:12px;color:var(--fg-bright);flex:1;"><em style="color:var(--fg-dim)">*手指敲打着桌面，目光移向窗外*</em><br>"你昨晚回来得很晚。你到底去了哪里？"</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Step 1: 记忆检索 -->
+<div class="chain-step">
+    <div class="chain-step-header"><span class="chain-step-num">1</span><span class="chain-step-title">记忆检索</span><span class="chain-step-meta">3条命中 / 共47条</span></div>
+    <div class="chain-step-body">
+        <div class="memory-item"><span class="memory-score tag-green">0.92</span><span class="memory-text">第5轮 — 皮拉："我...相信你。"（首次表白）</span></div>
+        <div class="memory-item"><span class="memory-score tag-green">0.85</span><span class="memory-text">第20轮 — 被发现撒谎，皮拉信任度骤降</span></div>
+        <div class="memory-item"><span class="memory-score tag-yellow">0.67</span><span class="memory-text">第15轮 — 共同战斗，配合默契</span></div>
+    </div>
+</div>
+
+<!-- Step 2: 记忆压缩 -->
+<div class="chain-step">
+    <div class="chain-step-header"><span class="chain-step-num">2</span><span class="chain-step-title">记忆压缩</span><span class="chain-step-meta">3条 → 1条摘要</span></div>
+    <div class="chain-step-body">
+        <div class="compress-before">皮拉曾对玩家表白信任（第5轮），后因子第20轮暴露撒谎而信任骤降，中间有过共同战斗经历。</div>
+        <div class="compress-arrow">&#8595; 压缩</div>
+        <div class="compress-after">皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。</div>
+    </div>
+</div>
+
+<!-- Step 3: 意图识别 -->
+<div class="chain-step">
+    <div class="chain-step-header"><span class="chain-step-num">3</span><span class="chain-step-title">意图识别</span><span class="chain-step-meta">导演模块</span></div>
+    <div class="chain-step-body">
+        <div class="intent-row"><span class="intent-key">玩家输入</span><span class="intent-val">"我可以解释...事情不是你想的那样。"</span></div>
+        <div class="intent-row"><span class="intent-key">识别意图</span><span class="intent-val"><span class="tag tag-purple">辩解</span> <span class="tag tag-yellow">求和</span></span></div>
+        <div class="intent-row"><span class="intent-key">导演指令</span><span class="intent-val" style="color:var(--accent-light)">皮拉不应轻易原谅，需继续施压试探，但内心动摇。</span></div>
+    </div>
+</div>
+
+<!-- Step 4: 最终Prompt -->
+<div class="chain-step">
+    <div class="chain-step-header"><span class="chain-step-num">4</span><span class="chain-step-title">最终Prompt</span><span class="chain-step-meta">2,847 tokens</span></div>
+    <div class="chain-step-body">
+        <div class="prompt-section"><div class="prompt-label">System</div><div class="prompt-block">你是皮拉，一名女特工。当前场景：审讯室。你对玩家的态度：基本信任但正在动摇。你内心的矛盾：想相信他但证据确凿。导演指令：继续施压试探，但内心动摇。</div></div>
+        <div class="prompt-section"><div class="prompt-label">Memory</div><div class="prompt-block">[压缩记忆] 皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。</div></div>
+        <div class="prompt-section"><div class="prompt-label">Recent</div><div class="prompt-block">第22轮 玩家："我真的可以解释。" 皮拉：*沉默片刻* "我在听。"</div></div>
+        <div class="prompt-section"><div class="prompt-label">User</div><div class="prompt-block">玩家说："我可以解释...事情不是你想的那样。"</div></div>
+    </div>
+</div>
+
+</div>
+</div>
+
+</div>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<div class="footer">
+    <div style="display:flex;gap:16px"><span>事件数: 1,247</span><span>快照数: 30</span></div>
+    <div style="display:flex;gap:16px"><span>最新: 第23轮，对话，1.24秒</span><span>版本 1.0.0</span></div>
+</div>
+
+<script>
+// ===== 历史轮次数据 =====
+const TURN_HISTORY = {
+    23: {
+        player: '我可以解释...事情不是你想的那样。',
+        char: '*手指敲打着桌面，目光移向窗外*\n"你昨晚回来得很晚。你到底去了哪里？"',
+        intent: ['辩解', '求和'],
+        directive: '皮拉不应轻易原谅，需继续施压试探，但内心动摇。',
+        memories: [
+            {score:0.92, text:'第5轮 — 皮拉："我...相信你。"（首次表白）'},
+            {score:0.85, text:'第20轮 — 被发现撒谎，皮拉信任度骤降'},
+            {score:0.67, text:'第15轮 — 共同战斗，配合默契'}
+        ],
+        compress: {before:'皮拉曾对玩家表白信任（第5轮），后因第20轮暴露撒谎而信任骤降，中间有过共同战斗经历。', after:'皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。'},
+        prompt: {system:'你是皮拉，一名女特工。当前场景：审讯室。你对玩家的态度：基本信任但正在动摇。你内心的矛盾：想相信他但证据确凿。导演指令：继续施压试探，但内心动摇。', memory:'[压缩记忆] 皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。', recent:'第22轮 玩家："我真的可以解释。" 皮拉：*沉默片刻* "我在听。"', user:'玩家说："我可以解释...事情不是你想的那样。"'},
+        delta: [{field:'审讯室.紧张度', from:'较低', to:'高', reason:'叙事提议：审讯压力上升'}, {field:'玩家.压力值', from:'低', to:'中等', reason:'叙事提议：被追问感到压力'}],
+        latency: '1.24秒', tokens: 2847
+    },
+    22: {
+        player: '我真的可以解释。',
+        char: '*沉默片刻* "我在听。但你要明白，我需要的是真相。"',
+        intent: ['请求', '安抚'],
+        directive: '皮拉保持冷静但冷淡，给玩家机会但不抱期望。',
+        memories: [
+            {score:0.91, text:'第20轮 — 被发现撒谎，皮拉信任度骤降'},
+            {score:0.82, text:'第21轮 — 玩家主动道歉，皮拉略有恢复'},
+            {score:0.65, text:'第5轮 — 皮拉首次表白信任'}
+        ],
+        compress: {before:'第20轮信任暴跌，第21轮玩家道歉略有恢复。皮拉内心仍在挣扎。', after:'信任危机后，皮拉处于观望状态，等待玩家给出可信的解释。'},
+        prompt: {system:'你是皮拉。场景：审讯室。态度：冷淡观望。内心：给最后一次机会。', memory:'信任危机后观望状态，等待玩家解释。', recent:'第21轮 玩家道歉，皮拉接受但未原谅。', user:'玩家说："我真的可以解释。"'},
+        delta: [{field:'皮拉.信任度', from:'怀疑', to:'观望', reason:'玩家主动请求解释'}],
+        latency: '1.18秒', tokens: 2650
+    },
+    21: {
+        player: '对不起，我不该瞒着你。',
+        char: '*深深叹了口气* "对不起不能解决一切。但我...愿意听听。"',
+        intent: ['道歉', '坦诚'],
+        directive: '皮拉态度软化但仍有防备。道歉被接受但不等于原谅。',
+        memories: [
+            {score:0.95, text:'第20轮 — 被发现撒谎，皮拉信任度骤降'},
+            {score:0.78, text:'第5轮 — 皮拉首次表白信任'},
+            {score:0.60, text:'第18轮 — 玩家展示可靠的一面'}
+        ],
+        compress: {before:'第20轮谎言被揭穿后，玩家在第21轮主动道歉。', after:'谎言揭穿后的第一轮道歉，皮拉态度开始软化。'},
+        prompt: {system:'你是皮拉。态度：防备但软化。内心：失望但仍有感情。', memory:'谎言揭穿后玩家道歉，皮拉开始软化。', recent:'第20轮 谎言揭穿，皮拉震怒。', user:'玩家说："对不起，我不该瞒着你。"'},
+        delta: [{field:'皮拉.信任度', from:'崩溃', to:'怀疑', reason:'玩家主动道歉'}],
+        latency: '1.31秒', tokens: 2780
+    },
+    20: {
+        player: '我说的都是真的！',
+        char: '*猛地站起来，文件甩在桌上* "够了。我查过记录，你在撒谎。"',
+        intent: ['否认', '抵赖'],
+        directive: '谎言被铁证揭穿。皮拉从怀疑转为确信被背叛，情绪爆发。',
+        memories: [
+            {score:0.96, text:'第19轮 — 皮拉开始暗中调查'},
+            {score:0.88, text:'第5轮 — 皮拉曾完全信任玩家'},
+            {score:0.72, text:'第10轮 — 玩家行为首次出现疑点'}
+        ],
+        compress: {before:'皮拉从第10轮开始累积怀疑，第19轮暗中调查，第20轮铁证确凿。', after:'信任彻底崩塌。皮拉确认被背叛，情绪失控。'},
+        prompt: {system:'你是皮拉。状态：情绪爆发。你刚刚确认了玩家的谎言。', memory:'信任彻底崩塌，确认被背叛。', recent:'第19轮 皮拉暗中调查取证。', user:'玩家说："我说的都是真的！"'},
+        delta: [{field:'皮拉.信任度', from:'基本信任', to:'崩溃', reason:'谎言被铁证揭穿'}, {field:'皮拉.情绪', from:'焦虑', to:'愤怒', reason:'确认被欺骗'}],
+        latency: '1.15秒', tokens: 2520
+    },
+    5: {
+        player: '谢谢你愿意相信我。',
+        char: '*低下头，轻声说* "我...相信你。不是因为你是谁，而是因为...你是你。"',
+        intent: ['感谢', '接纳'],
+        directive: '皮拉首次完全敞开心扉。这是情感转折点，信任达到峰值。',
+        memories: [
+            {score:0.90, text:'第4轮 — 玩家救了皮拉一命'},
+            {score:0.75, text:'第3轮 — 两人首次合作成功'},
+            {score:0.55, text:'第1轮 — 初次见面，皮拉冷漠'}
+        ],
+        compress: {before:'从第1轮冷漠到第4轮救命，皮拉逐渐被玩家的行动打动。', after:'皮拉被玩家的行动完全打动，首次完全信任。'},
+        prompt: {system:'你是皮拉。场景：战后废墟。内心：完全被感动。', memory:'玩家行动证明了自己，皮拉完全信任。', recent:'第4轮 玩家舍身救皮拉。', user:'玩家说："谢谢你愿意相信我。"'},
+        delta: [{field:'皮拉.信任度', from:' cautious', to:'深厚', reason:'玩家救命之恩+持续证明'}],
+        latency: '0.98秒', tokens: 2100
+    }
+};
+function loadTurn(turnNum) {
+    var t = TURN_HISTORY[turnNum];
+    if (!t) return;
+    var steps = document.querySelectorAll('#tab-engine .chain-step');
+    if (steps.length < 5) return;
+    // 0=对话 1=记忆 2=压缩 3=意图 4=Prompt
+    // 更新对话
+    steps[0].querySelector('.chain-step-body').innerHTML =
+        '<div style="display:flex;flex-direction:column;gap:6px;">' +
+        '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--info);font-weight:600;min-width:36px;">玩家</span><span style="font-size:12px;color:var(--fg);flex:1;">' + t.player + '</span></div>' +
+        '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--accent-light);font-weight:600;min-width:36px;">皮拉</span><span style="font-size:12px;color:var(--fg-bright);flex:1;">' + t.char.replace(/\\n/g, '<br>') + '</span></div></div>';
+    steps[0].querySelector('.chain-step-title').textContent = '第' + turnNum + '轮对话';
+    // 更新记忆
+    steps[1].querySelector('.chain-step-body').innerHTML = t.memories.map(function(m) {
+        var c = m.score >= 0.85 ? 'tag-green' : m.score >= 0.6 ? 'tag-yellow' : 'tag-red';
+        return '<div class="memory-item"><span class="memory-score ' + c + '">' + m.score + '</span><span class="memory-text">' + m.text + '</span></div>';
+    }).join('');
+    // 更新压缩
+    if (t.compress) {
+        steps[2].querySelector('.chain-step-body').innerHTML =
+            '<div class="compress-before">' + t.compress.before + '</div>' +
+            '<div class="compress-arrow">&#8595; 压缩</div>' +
+            '<div class="compress-after">' + t.compress.after + '</div>';
+    }
+    // 更新意图
+    if (t.intent) {
+        var tags = t.intent.map(function(i) { return '<span class="tag tag-purple">' + i + '</span>'; }).join(' ');
+        steps[3].querySelector('.chain-step-body').innerHTML =
+            '<div class="intent-row"><span class="intent-key">玩家输入</span><span class="intent-val">"' + t.player + '"</span></div>' +
+            '<div class="intent-row"><span class="intent-key">识别意图</span><span class="intent-val">' + tags + '</span></div>' +
+            '<div class="intent-row"><span class="intent-key">导演指令</span><span class="intent-val" style="color:var(--accent-light)">' + t.directive + '</span></div>';
+    }
+    // 更新Prompt
+    if (t.prompt) {
+        steps[4].querySelector('.chain-step-body').innerHTML =
+            '<div class="prompt-section"><div class="prompt-label">System</div><div class="prompt-block">' + t.prompt.system + '</div></div>' +
+            '<div class="prompt-section"><div class="prompt-label">Memory</div><div class="prompt-block">' + t.prompt.memory + '</div></div>' +
+            '<div class="prompt-section"><div class="prompt-label">Recent</div><div class="prompt-block">' + t.prompt.recent + '</div></div>' +
+            '<div class="prompt-section"><div class="prompt-label">User</div><div class="prompt-block">' + t.prompt.user + '</div></div>';
+        steps[4].querySelector('.chain-step-meta').textContent = t.tokens + ' tokens';
+    }
+    // 更新信息栏
+    var infoBar = document.querySelector('#tab-engine > div > div:nth-child(2)');
+    if (infoBar) {
+        infoBar.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">玩家输入</span><span style="color:var(--fg-bright)">"' + (t.player.length > 20 ? t.player.substring(0,20) + '...' : t.player) + '"</span></div>' +
+            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">皮拉输出</span><span style="color:var(--fg-bright)">"' + (t.char.length > 20 ? t.char.substring(0,20)+'...' : t.char) + '"</span></div>' +
+            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">延迟</span><span style="color:var(--ok)">' + t.latency + '</span></div>';
+    }
+}
+
+// ===== 关系数据 =====
+// type: 关系类型（客观定性）  level+label: 态度程度（主观定量）
+const RELATIONS = [
+    {from:'皮拉', to:'玩家', type:'情侣', level:'trust-basic', label:'基本信任', tags:['动摇中']},
+    {from:'皮拉', to:'导师', type:'养父女', level:'trust-deep', label:'深厚羁绊', tags:[]},
+    {from:'玩家', to:'皮拉', type:'情侣', level:'trust-distrust', label:'信任骤降', tags:[]},
+    {from:'玩家', to:'导师', type:'陌生人', level:'level-none', label:'素未谋面', tags:[]},
+    {from:'导师', to:'皮拉', type:'养父女', level:'trust-deep', label:'保护+愧疚', tags:[]},
+    {from:'导师', to:'玩家', type:'陌生人', level:'trust-cautious', label:'警惕+试探', tags:[]}
+];
+function renderRelations(charName) {
+    var container = document.getElementById('relation-content');
+    if (!container) return;
+    var outEdges = RELATIONS.filter(function(r) { return r.from === charName; });
+    var inEdges = RELATIONS.filter(function(r) { return r.to === charName; });
+    var html = '';
+    if (outEdges.length > 0) {
+        html += '<div class="rel-section"><div class="rel-section-title">' + charName + ' 如何看待他人</div>';
+        outEdges.forEach(function(e) {
+            var tagsHtml = (e.tags || []).map(function(t) { return '<span class="rel-tag tag-yellow" style="font-size:10px;padding:1px 5px">' + t + '</span>'; }).join('');
+            html += '<div class="rel-row"><span class="rel-name">' + e.to + '</span><span class="rel-type">' + e.type + '</span><span class="rel-tag ' + e.level + '">' + e.label + '</span>' + tagsHtml + '</div>';
+        });
+        html += '</div>';
+    }
+    if (inEdges.length > 0) {
+        html += '<div class="rel-section"><div class="rel-section-title">他人如何看待 ' + charName + '</div>';
+        inEdges.forEach(function(e) {
+            var tagsHtml = (e.tags || []).map(function(t) { return '<span class="rel-tag tag-yellow" style="font-size:10px;padding:1px 5px">' + t + '</span>'; }).join('');
+            html += '<div class="rel-row"><span class="rel-name">' + e.from + '</span><span class="rel-type">' + e.type + '</span><span class="rel-tag ' + e.level + '">' + e.label + '</span>' + tagsHtml + '</div>';
+        });
+        html += '</div>';
+    }
+    container.innerHTML = html || '<div style="color:var(--fg-dark);font-size:11px;">暂无关系数据</div>';
+}
+
+// ===== 角色数据 =====
+const CHAR_DATA = {
+    player: {
+        name: '玩家',
+        role: '你自己',
+        roleTag: 'tag-blue',
+        layers: [
+            {name:'一层 体格', status:'ok', value:'自定义外观'},
+            {name:'二层 声纹', status:'ok', value:'自由输入'},
+            {name:'三层 根源', status:'ok', value:'自定义背景'},
+            {name:'四层 人际', status:'warn', value:'皮拉：信任骤降'},
+            {name:'五层 核心', status:'warn', value:'<span class="level-tag level-high">压力较高</span> <span class="tag tag-yellow">焦虑</span>'},
+            {name:'六层 张力', status:'ok', value:'想说实话 vs 害怕暴露'},
+            {name:'七层 轨迹', status:'ok', value:'从自信 → 被动防守 → 动摇'},
+            {name:'八层 钩子', status:'ok', value:'真实身份即将暴露？'}
+        ]
+    },
+    pyrrha: {
+        name: '皮拉',
+        role: '主角',
+        roleTag: 'tag-purple',
+        layers: [
+            {name:'一层 体格', status:'ok', value:'红发，绿眼，修长体型'},
+            {name:'二层 声纹', status:'ok', value:'正式语域，语速中等', bar:94, barLabel:'稳定度 <span class="level-tag tag-green" style="font-size:10px;padding:1px 5px;margin-left:4px">高</span>'},
+            {name:'三层 根源', status:'ok', value:'孤儿院出身，被导师收养培养成特工'},
+            {name:'四层 人际', status:'warn', value:'玩家：信任骤降 / 导师：深厚羁绊'},
+            {name:'五层 核心', status:'warn', value:'<span class="level-tag trust-basic" style="font-size:11px;padding:2px 7px">基本信任</span> <span class="level-tag level-mid" style="font-size:11px;padding:2px 7px;margin-left:4px">压力中等</span> <span class="tag tag-yellow" style="font-size:10px;padding:1px 5px;margin-left:4px">警觉</span>'},
+            {name:'六层 张力', status:'ok', value:'想信任对方 vs 证据暗示撒谎'},
+            {name:'七层 轨迹', status:'ok', value:'从绝对信任者 → 怀疑 → 挣扎', note:'弧线进度：第二幕中段'},
+            {name:'八层 钩子', status:'ok', value:'玩家的真实身份？导师隐瞒了什么？', note:'未解伏笔：2个'}
+        ]
+    },
+    mentor: {
+        name: '导师（雷恩）',
+        role: '配角',
+        roleTag: 'tag-green',
+        layers: [
+            {name:'一层 体格', status:'ok', value:'灰发，蓝眼，身材魁梧'},
+            {name:'二层 声纹', status:'ok', value:'沉稳低语，命令式句尾', bar:97, barLabel:'稳定度 <span class="level-tag tag-green" style="font-size:10px;padding:1px 5px;margin-left:4px">高</span>'},
+            {name:'三层 根源', status:'ok', value:'前情报官，收养皮拉并训练她'},
+            {name:'四层 人际', status:'ok', value:'皮拉：深厚羁绊 / 玩家：警惕'},
+            {name:'五层 核心', status:'ok', value:'<span class="level-tag trust-distrust">不信任</span> <span class="level-tag level-low">压力低</span> <span class="tag tag-blue">冷静</span>'},
+            {name:'六层 张力', status:'ok', value:'保护组织秘密 vs 对皮拉的愧疚'},
+            {name:'七层 轨迹', status:'ok', value:'幕后操控者 → 逐渐失控'},
+            {name:'八层 钩子', status:'ok', value:'他隐瞒了什么？真实目的是什么？', note:'未解伏笔：2个'}
+        ]
+    },
+    guard: {
+        name: '守卫',
+        role: '未登场',
+        roleTag: '',
+        layers: [
+            {name:'一层 体格', status:'ok', value:'—'},
+            {name:'二层 声纹', status:'ok', value:'—'},
+            {name:'三层 根源', status:'ok', value:'—'},
+            {name:'四层 人际', status:'ok', value:'—'},
+            {name:'五层 核心', status:'ok', value:'—'},
+            {name:'六层 张力', status:'ok', value:'—'},
+            {name:'七层 轨迹', status:'ok', value:'—'},
+            {name:'八层 钩子', status:'ok', value:'—'}
+        ]
+    }
+};
+
+function switchChar(charId) {
+    var data = CHAR_DATA[charId];
+    if (!data) return;
+    // 更新角色标签
+    var badge = document.getElementById('char-role-badge');
+    badge.textContent = data.role;
+    badge.className = 'tag ' + data.roleTag;
+    if (charId === 'guard') badge.style.display = 'none';
+    else badge.style.display = '';
+    // 重新渲染关系
+    renderRelations(data.name);
+    // 重新渲染八层
+    var grid = document.querySelector('.layer-grid');
+    if (grid && data.layers) {
+        grid.innerHTML = data.layers.map(function(l) {
+            var barHtml = l.bar ? '<div class="layer-bar"><div class="layer-bar-fill" style="width:' + l.bar + '%;background:var(--ok)"></div></div>' : '';
+            var noteHtml = l.note ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:4px">' + l.note + '</div>' : '';
+            var barLabelHtml = l.barLabel ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:2px">' + l.barLabel + '</div>' : '';
+            return '<div class="layer-item"><div class="layer-item-header"><span class="layer-name">' + l.name + '</span><span class="layer-status ' + l.status + '">' + (l.status === 'ok' ? '&#10003;' : '!') + '</span></div><div class="layer-value">' + l.value + '</div>' + barHtml + barLabelHtml + noteHtml + '</div>';
+        }).join('');
+    }
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+    document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
+    document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+}
+function toggleCard(cardId) {
+    var card = document.getElementById(cardId);
+    if (card) card.classList.toggle('expanded');
+}
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('card-layer').classList.add('expanded');
+    document.getElementById('card-relation').classList.add('expanded');
+    document.getElementById('card-event').classList.add('expanded');
+    document.getElementById('card-causal').classList.add('expanded');
+    renderRelations('皮拉');
+});
+</script>
+
+</body>
+</html>
