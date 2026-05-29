@@ -125,6 +125,12 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             f"- 剧情推进：{plot_constraint}",
             "- 文风：禁止生成臀腿腰胸等垃圾小说描写",
             f"- 输出格式：环境描写 + NPC 反应 + {user_name or '用户'} 行动空间",
+            "",
+            "# 叙事分段约束（最高优先级，必须遵守）",
+            "- 单段只做一件事：要么写景，要么写对话，要么写动作，要么写内心。禁止同一段混合两件以上",
+            "- 角色台词独占一段，台词前后不加动作描写。动作另起一段，动作段落不超过2句话",
+            "- 对话每段不超过3句，每句不超过30字。叙述句每句不超过25字，长句必须拆成短句",
+            "- 删除'轻轻''缓缓''微微'等弱化词。动作描写极简，禁止连续相同句式超过2次",
         ]
         if length_hint:
             constraints_lines.append(f"- 长度控制：{length_hint}")
@@ -241,30 +247,42 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             '  "对话内容"（双引号 = 角色台词）',
             "  **动作描写**（星号 = 角色动作/表情）",
             "  （心理活动）（小括号 = 角色内心独白）",
-            "- 禁止：替 user 做决定、推进剧情、OOC",
+            "- 禁止：替 user 做决定、推进剧情、OOC、括号注释（如'（苦笑）'）",
+            "",
+            "# 呼吸点规则（按场景切换）",
+            "- [非紧张场景：日常/探索/交谈] 每3-4段对话/动作后，插入1段环境/内心/他人反应（≤2句）",
+            "- [紧张场景：对峙/战斗/审讯/逃亡] 允许连续5-6段不加环境，靠短句和断行制造窒息感",
             "",
             "# 输出格式示例（必须严格模仿此格式）",
-            "你的输出格式应如下例：",
+            "阳光透过铁艺大门，在地面投下斑驳纹路。银杏叶被风卷起，在喷泉边打转。",
             "",
-            "阳光透过女子学校的铁艺大门，在地面投下斑驳的纹路。秋天的银杏叶被风卷起，在门口的喷泉边打转。",
+            "**魏丝的手指停在剑柄上，指节发白。**",
             "",
-            "几个正抱着课本路过的女生停下脚步，目光警惕地打量着门口这位不速之客。",
+            '"你来了。"',
             "",
-            "校门口的石狮静默矗立，等待着这位闯入者迈出第一步。",
+            '**她抬起头。**',
+            "",
+            '"我等你很久了。"',
+            "",
+            "校门口的石狮静默矗立。风停了。",
             "",
             "注意：",
             "- 每段之间必须空一行",
-            "- 每段是一个独立的画面",
-            "- 段落长度应错落有致，不要每段等长",
+            "- 每段只做一件事：景 / 对话 / 动作 / 内心，禁止混用",
+            "- 台词独占一段，前后不加动作。动作另起一段",
+            "- 叙述句每句≤25字，对话每句≤30字",
+            "- 禁止括号注释，情绪通过动作和台词传达",
             "",
             "# 输出前自我校验（COT）",
             "在生成最终回复前，请按以下步骤逐项检查：",
-            "1. 这段回复中是否有替 user 生成行动或台词？→ 如果有，删除对应部分",
-            "2. 这段回复是否推进了主线剧情？→ 如果是，改为环境描写或NPC反应",
-            "3. 这段回复是否符合角色设定和当前场景？→ 如果否，重新调整",
-            '4. 标记使用是否正确（台词用\", 动作用**, 心理用()）？→ 如果否，修正',
-            "5. 回复长度是否在 400-600 字范围内？→ 如果否，压缩或扩展",
-            "6. 回复格式是否与上述示例一致（每段空行分隔、每段一个独立画面）？→ 如果否，重新分段",
+            "1. 是否有替 user 生成行动或台词？→ 有则删除",
+            "2. 是否推进了主线剧情？→ 是则改为环境或NPC反应",
+            "3. 是否有同一段混合两件事（如台词+动作）？→ 是则拆段",
+            "4. 是否有'轻轻''缓缓'等弱化词？→ 有则删除",
+            "5. 是否有括号注释（如'（苦笑）'）？→ 有则改为动作描写",
+            "6. 标记是否正确（台词用\", 动作用**, 心理用()）？→ 否则修正",
+            "7. 长度是否在400-600字？→ 否则调整",
+            "8. 段与段之间是否空了一行？→ 否则补空行",
         ]
         # 追加重试策略中的额外输出规范
         if extra_output_spec:
@@ -281,18 +299,52 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             f"原始: {len(original_system)} → 重组: {len(optimized_system)}"
         )
 
+        # 向实时日志流推送 Prompt 组装事件
+        try:
+            from app.utils.log_stream import log_ring, LogEntry
+            import time
+            t = time.localtime()
+            time_str = time.strftime("%H:%M:%S", t) + ".{:03d}".format(int((time.time() % 1) * 1000))
+            block_names = []
+            for b in blocks:
+                if b.startswith("[") and "]" in b:
+                    block_names.append(b.split("]")[0][1:])
+            log_ring.append(LogEntry(
+                timestamp=time.time(),
+                time_str=time_str,
+                node="director",
+                node_name="aura-graph",
+                level="INFO",
+                action=f"Prompt 组装完成 | 区块: {len(blocks)} ({', '.join(block_names[:5])}{'...' if len(block_names) > 5 else ''})",
+                detail=f"字符: {len(optimized_system)}",
+                duration_ms=0,
+                status="ok",
+            ))
+        except Exception:
+            pass
+
         # 替换 System Prompt
         if messages_list and messages_list[0].get("role") == "system":
             messages_list[0]["content"] = optimized_system
 
         # --- 近因效应：追加 WORKING_MEMORY 到最后一条 user 消息 ---
         # user 消息末尾的约束也要模型化：DeepSeek 允许适当推进，Gemini 严格限制
+        # 近因效应追加约束（追加到最后一条 user 消息末尾，遵循率最高）
+        narrative_rules = (
+            "\n"
+            "4. 单段只做一件事：景/对话/动作/内心，禁止混用\n"
+            "5. 台词独占一段，前后不加动作；动作另起一段，≤2句\n"
+            "6. 叙述句每句≤25字，对话每句≤30字，长句必拆\n"
+            "7. 删除'轻轻''缓缓'等弱化词；禁止括号注释\n"
+            "8. 段与段之间必须空一行"
+        )
         if backend == "deepseek":
             user_constraint = (
                 "\n\n[系统约束] 请严格遵守以下规则：\n"
                 "1. 禁止生成用户的台词和行动\n"
                 "2. 可以生成其他NPC的台词、行动和环境描写\n"
                 "3. 适当推进剧情（如环境变化、NPC自发行动），但核心决策留给用户"
+                + narrative_rules
             )
         elif backend == "gemini":
             user_constraint = (
@@ -300,6 +352,7 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                 "1. 禁止生成用户的台词和行动\n"
                 "2. 可以生成其他NPC的台词、行动和环境描写\n"
                 "3. 严格禁止推进剧情；只渲染当前场景，等用户输入后再推进"
+                + narrative_rules
             )
         else:  # kimi / 默认
             user_constraint = (
@@ -307,6 +360,7 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                 "1. 禁止生成用户的台词和行动\n"
                 "2. 可以生成其他NPC的台词、行动和环境描写\n"
                 "3. 适当推进剧情，但核心决策留给用户"
+                + narrative_rules
             )
         last_user_idx = -1
         for i in range(len(messages_list) - 1, -1, -1):

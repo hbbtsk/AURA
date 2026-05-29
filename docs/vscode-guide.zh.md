@@ -31,7 +31,7 @@ python app/main.py
 
 **方式 C — 直接使用 Uvicorn**
 ```bash
-python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8000)"
+python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8080)"
 ```
 
 ---
@@ -50,7 +50,7 @@ AURA 初始化完成
 [AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: 0
 [AURA→卡带] 可用卡带: ['rwby_beacon']
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Uvicorn running on http://0.0.0.0:8080
 ```
 
 ### 测试健康检查端点
@@ -58,7 +58,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 在新终端标签页中执行：
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 ```
 
 预期返回：
@@ -80,7 +80,7 @@ curl http://localhost:8000/health
 ### 模式 A — TAVO 兼容模式
 
 ```bash
-curl -X POST http://localhost:8000/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-Tavo-Debug: true" \
   -d '{
@@ -93,7 +93,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ```bash
 # 加载 RWBY 卡带，与魏丝对话
-curl -X POST http://localhost:8000/v1/world/completions \
+curl -X POST http://localhost:8080/v1/world/completions \
   -H "Content-Type: application/json" \
   -d '{
     "message": "你好，魏丝。",
@@ -105,7 +105,7 @@ curl -X POST http://localhost:8000/v1/world/completions \
 ### 查看可用卡带
 
 ```bash
-curl http://localhost:8000/v1/models
+curl http://localhost:8080/v1/models
 ```
 
 ---
@@ -120,7 +120,7 @@ py -m app.main
 python3 -m app.main
 ```
 
-### 2. 端口 8000 被占用
+### 2. 端口 8080 被占用
 
 修改 `app/main.py` 中的端口：
 ```python

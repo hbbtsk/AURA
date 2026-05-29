@@ -273,7 +273,7 @@ echo "DEEPSEEK_API_KEY=sk-your-key" > .env
 
 # 启动 Mode A（Prompt 编译器）
 python -m app.main
-# 然后将 TAVO 连接至：http://localhost:8000/v1/chat/completions
+# 然后将 TAVO 连接至：http://localhost:8080/v1/chat/completions
 ```
 
 > **注意**：当前版本是骨架。它能运行，但效果可能还比不上原生 ST。我们在验证架构，不是在交付产品。

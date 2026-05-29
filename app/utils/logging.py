@@ -94,6 +94,11 @@ def setup_logging(
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+    # 注册实时日志流 Handler（内存缓冲区，供 SSE 推送）
+    from app.utils.log_stream import LogStreamHandler
+    _stream_handler = LogStreamHandler(level=logging.DEBUG)
+    logging.getLogger().addHandler(_stream_handler)
+
     _initialized = True
 
 

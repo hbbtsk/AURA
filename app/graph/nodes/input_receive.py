@@ -77,9 +77,16 @@ async def input_receive_node(state: "AgentState") -> "AgentState":
     intent_result = None
     if last_input:
         try:
+            # 提取最近 5 轮对话作为意图分析的上下文
+            recent_dialogue = [
+                {"role": m["role"], "content": m["content"][:300]}
+                for m in tavo_dialogue_messages[-10:]
+                if m.get("role") in ("user", "assistant")
+            ][-5:]
             context = {
                 "scene_type": "未知",
                 "active_entities": [user_name] if user_name else [],
+                "recent_dialogue": recent_dialogue,
             }
             intent_result = await intent_tagger.analyze(last_input, context=context)
             if intent_result and intent_result.should_use():

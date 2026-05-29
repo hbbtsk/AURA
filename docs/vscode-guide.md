@@ -31,7 +31,7 @@ python app/main.py
 
 **Option C — Uvicorn directly**
 ```bash
-python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8000)"
+python -c "import uvicorn; uvicorn.run('app.main:app', host='0.0.0.0', port=8080)"
 ```
 
 ---
@@ -50,7 +50,7 @@ AURA 初始化完成
 [AURA→记忆] MemoryManager 就绪 | FAISS 记忆数: 0
 [AURA→卡带] 可用卡带: ['rwby_beacon']
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     Uvicorn running on http://0.0.0.0:8080
 ```
 
 ### Test the Health Endpoint
@@ -58,7 +58,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 In a new terminal tab:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 ```
 
 Expected response:
@@ -80,7 +80,7 @@ Expected response:
 ### Mode A — TAVO Compatible
 
 ```bash
-curl -X POST http://localhost:8000/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "X-Tavo-Debug: true" \
   -d '{
@@ -93,7 +93,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ```bash
 # Load the RWBY cartridge and talk to Weiss
-curl -X POST http://localhost:8000/v1/world/completions \
+curl -X POST http://localhost:8080/v1/world/completions \
   -H "Content-Type: application/json" \
   -d '{
     "message": "你好，魏丝。",
@@ -105,7 +105,7 @@ curl -X POST http://localhost:8000/v1/world/completions \
 ### List Available Cartridges
 
 ```bash
-curl http://localhost:8000/v1/models
+curl http://localhost:8080/v1/models
 ```
 
 ---
@@ -120,7 +120,7 @@ py -m app.main
 python3 -m app.main
 ```
 
-### 2. Port 8000 Already in Use
+### 2. Port 8080 Already in Use
 
 Change the port in `app/main.py`:
 ```python

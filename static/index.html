@@ -22,6 +22,10 @@
     --warn: #c4a35a;
     --alert: #c4715b;
     --info: #6B8CBB;
+    --delta-color: #8b949e;
+    --llm-color: #6B8CBB;
+    --fp-color: #c4a35a;
+    --guard-color: #5b8c5a;
     --font-mono: 'SF Mono', 'Fira Code', 'Courier New', monospace;
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
 }
@@ -245,6 +249,55 @@ body {
 @media (max-width: 1200px) {
     .tri-upper { grid-template-columns: 1fr; }
 }
+
+/* ===== 运行日志 ===== */
+.log-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; flex-shrink: 0; }
+.log-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.log-filter-btn { padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-0); color: var(--fg-dim); font-size: 11px; cursor: pointer; transition: all 0.2s; }
+.log-filter-btn:hover { border-color: var(--border-hover); color: var(--fg); }
+.log-filter-btn.active { background: rgba(123,109,141,0.15); color: var(--accent-light); border-color: var(--accent); }
+.log-container { display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 11px; }
+.log-entry { display: flex; align-items: flex-start; gap: 10px; padding: 5px 8px; border-radius: 4px; transition: background 0.15s; }
+.log-entry:hover { background: rgba(255,255,255,0.02); }
+.log-time { color: var(--fg-dark); min-width: 75px; flex-shrink: 0; font-size: 10px; padding-top: 1px; }
+.log-node { min-width: 90px; flex-shrink: 0; }
+.log-node-badge { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 3px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.log-node-director  { background: rgba(123,109,141,0.15); color: var(--accent-light); }
+.log-node-memory    { background: rgba(107,140,187,0.15); color: var(--info); }
+.log-node-character { background: rgba(91,140,90,0.15); color: var(--ok); }
+.log-node-review    { background: rgba(196,163,90,0.15); color: var(--warn); }
+.log-node-world     { background: rgba(196,113,91,0.15); color: var(--alert); }
+.log-node-system    { background: rgba(72,79,88,0.2); color: var(--fg-dim); }
+.log-action { color: var(--fg); flex: 1; line-height: 1.5; }
+.log-detail { color: var(--fg-dark); font-size: 10px; margin-left: 6px; }
+.log-duration { color: var(--fg-dim); min-width: 50px; text-align: right; flex-shrink: 0; font-size: 10px; }
+.log-status { min-width: 16px; text-align: center; flex-shrink: 0; font-size: 12px; }
+.log-status.ok { color: var(--ok); }
+.log-status.warn { color: var(--warn); }
+.log-status.error { color: var(--alert); }
+.log-status.running { color: var(--info); animation: blink 1s infinite; }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.log-divider { height: 1px; background: var(--border); margin: 4px 0; opacity: 0.5; }
+.log-group-header { font-size: 10px; color: var(--fg-dark); font-weight: 600; padding: 4px 8px; margin-top: 4px; }
+
+/* ===== 日志详情面板 ===== */
+.log-entry { cursor: pointer; }
+.log-entry:hover { background: rgba(255,255,255,0.04); }
+.log-expand { color: var(--fg-dark); font-size: 9px; transition: transform 0.2s; margin-left: 4px; flex-shrink: 0; }
+.log-entry.expanded .log-expand { transform: rotate(180deg); }
+.log-detail-panel { display: none; padding: 10px 12px 12px 12px; background: var(--bg-0); border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; margin: 0 0 6px 0; }
+.log-detail-panel.expanded { display: block; }
+.log-entry-highlight { border-left: 2px solid var(--accent); }
+.log-prompt-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.log-prompt-title { font-size: 12px; font-weight: 600; color: var(--accent-light); }
+.log-prompt-meta { font-size: 10px; color: var(--fg-dark); }
+.log-prompt-section { margin-bottom: 8px; }
+.log-prompt-section:last-child { margin-bottom: 0; }
+.log-prompt-label { font-size: 9px; color: var(--accent-light); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+.log-prompt-block { font-size: 11px; color: var(--fg); line-height: 1.6; padding: 6px 8px; background: var(--bg-1); border-radius: 4px; border-left: 2px solid var(--accent); font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+.log-prompt-highlight { border-left-color: var(--ok); background: rgba(91,140,90,0.05); }
+.log-prompt-user { border-left-color: var(--info); background: rgba(107,140,187,0.05); }
+
 </style>
 </head>
 <body>
@@ -257,11 +310,11 @@ body {
             <h1>AURA 观测台</h1>
         </div>
         <div class="header-meta">
-            <div class="meta-item"><span class="label">会话</span><span class="value">测试_042</span></div>
-            <div class="meta-item"><span class="label">角色</span><span class="value">皮拉</span></div>
-            <div class="meta-item"><span class="label">轮次</span><span class="value">23 / 30</span></div>
-            <div class="meta-item"><span class="label">场景</span><span class="value" style="color:var(--warn)">审讯室</span></div>
-            <div class="meta-item"><span class="label">模型</span><span class="value">GPT-4o</span></div>
+            <div class="meta-item"><span class="label">会话</span><span class="value" id="meta-session">—</span></div>
+            <div class="meta-item"><span class="label">角色</span><span class="value" id="meta-char">—</span></div>
+            <div class="meta-item"><span class="label">轮次</span><span class="value" id="meta-turn">—</span></div>
+            <div class="meta-item"><span class="label">场景</span><span class="value" id="meta-scene">—</span></div>
+            <div class="meta-item"><span class="label">模型</span><span class="value" id="meta-model">—</span></div>
         </div>
     </div>
     <div class="header-right">
@@ -272,9 +325,8 @@ body {
 <!-- ═══════════════ NAV ═══════════════ -->
 <div class="nav">
     <button class="active" data-tab="now" onclick="switchTab('now')">实时面板</button>
-    <button data-tab="timeline" onclick="switchTab('timeline')">时序面板</button>
-    <button data-tab="compare" onclick="switchTab('compare')">对比面板</button>
     <button data-tab="engine" onclick="switchTab('engine')">引擎面板</button>
+    <button data-tab="logs" onclick="switchTab('logs')">运行日志</button>
 </div>
 
 <!-- ═══════════════ CONTENT ═══════════════ -->
@@ -421,27 +473,8 @@ body {
             <span class="card-toggle">&#9660;</span>
         </div>
         <div class="card-body">
-            <div class="card-content">
-                <table class="delta-table">
-                    <thead><tr><th>字段</th><th>变更</th><th>原因</th></tr></thead>
-                    <tbody>
-                        <tr>
-                            <td class="delta-field">审讯室.紧张度</td>
-                            <td><span class="delta-before">较低</span><span class="delta-arrow">&#8594;</span><span class="delta-after">高</span> <span class="delta-pos">&#8593;</span></td>
-                            <td class="delta-reason">叙事提议：审讯压力上升</td>
-                        </tr>
-                        <tr>
-                            <td class="delta-field">玩家.压力值</td>
-                            <td><span class="delta-before">低</span><span class="delta-arrow">&#8594;</span><span class="delta-after">中等</span> <span class="delta-pos">&#8593;</span></td>
-                            <td class="delta-reason">叙事提议：被追问感到压力</td>
-                        </tr>
-                        <tr>
-                            <td class="delta-field">皮拉.信任度</td>
-                            <td><span class="delta-before">基本信任</span><span class="delta-arrow">&#8594;</span><span class="delta-after">基本信任</span> <span class="delta-zero">未变</span></td>
-                            <td class="delta-reason">规则引擎：信任度不因单轮追问改变</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="card-content" id="delta-content">
+                <div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无状态变更数据。进行角色扮演对话后将自动记录。</div>
             </div>
         </div>
     </div>
@@ -457,24 +490,8 @@ body {
             <span class="card-toggle">&#9660;</span>
         </div>
         <div class="card-body">
-            <div class="card-content">
-                <div class="llm-narrative">
-                    <em style="color:var(--fg-dim)">*手指敲打着桌面，目光移向窗外*</em><br><br>
-                    "你昨晚回来得很晚。你到底去了哪里？"
-                </div>
-                <div class="code-block">{
-  <span class="key">"意图标签"</span>: [<span class="str">"质问"</span>, <span class="str">"施压"</span>],
-  <span class="key">"世界变更"</span>: [
-    {<span class="key">"字段"</span>: <span class="str">"审讯室.紧张度"</span>, <span class="key">"变化"</span>: <span class="num">+0.15</span>},
-    {<span class="key">"字段"</span>: <span class="str">"玩家.压力值"</span>, <span class="key">"变化"</span>: <span class="num">+0.10</span>}
-  ],
-  <span class="key">"可见性"</span>: <span class="str">"公开"</span>
-}</div>
-                <div class="llm-meta">
-                    <div class="llm-meta-item"><span class="llm-meta-label">模型</span><span class="llm-meta-value">GPT-4o</span></div>
-                    <div class="llm-meta-item"><span class="llm-meta-label">温度</span><span class="llm-meta-value">0.7</span></div>
-                    <div class="llm-meta-item"><span class="llm-meta-label">延迟</span><span class="llm-meta-value" style="color:var(--ok)">1.24秒</span></div>
-                </div>
+            <div class="card-content" id="llm-content">
+                <div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无叙事输出数据。</div>
             </div>
         </div>
     </div>
@@ -525,22 +542,8 @@ body {
             <span class="card-toggle">&#9660;</span>
         </div>
         <div class="card-body">
-            <div class="card-content">
-                <div class="causal-chain">
-                    <div class="chain-node root"><span class="chain-turn">第1轮</span><span class="chain-text">初次见面 — 建立信任基础</span></div>
-                    <div class="chain-arrow">&#8595;</div>
-                    <div class="chain-node"><span class="chain-turn">第5轮</span><span class="chain-text">帮助战斗 — 信任大增</span></div>
-                    <div class="chain-arrow">&#8595;</div>
-                    <div class="chain-node"><span class="chain-turn">第20轮</span><span class="chain-text" style="color:var(--alert)">被发现撒谎 — 信任暴跌</span></div>
-                    <div class="chain-arrow">&#8595;</div>
-                    <div class="chain-node"><span class="chain-turn">第21轮</span><span class="chain-text">主动道歉 — 信任略有恢复</span></div>
-                    <div class="chain-arrow">&#8595;</div>
-                    <div class="chain-node current"><span class="chain-turn" style="color:var(--accent-light);font-weight:600">第23轮</span><span class="chain-text" style="color:var(--fg-bright)">当前 — 审讯质问</span></div>
-                </div>
-                <div style="margin-top:8px;padding:8px 10px;background:rgba(196,113,91,0.05);border:1px solid rgba(196,113,91,0.15);border-radius:6px;">
-                    <div style="font-size:10px;color:var(--alert);font-weight:600;margin-bottom:3px">! 矛盾检测</div>
-                    <div style="font-size:11px;color:var(--fg-dim)">第20轮信任度暴跌后，第21轮仅略有恢复。规则引擎阻止了单轮进一步下降。</div>
-                </div>
+            <div class="card-content" id="causal-content">
+                <div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无因果链数据。进行多轮对话后将自动生成。</div>
             </div>
         </div>
     </div>
@@ -555,12 +558,8 @@ body {
             <span class="card-toggle">&#9660;</span>
         </div>
         <div class="card-body">
-            <div class="card-content">
-                <div class="metric-row">
-                    <div class="metric"><span class="metric-label">风格稳定度</span><span class="metric-value ok">高 (0.94)</span></div>
-                    <div class="metric"><span class="metric-label">格式</span><span class="metric-value ok">正常 &#10003;</span></div>
-                    <div class="metric"><span class="metric-label">响应延迟</span><span class="metric-value ok">1.24秒</span></div>
-                </div>
+            <div class="card-content" id="metric-content">
+                <div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无质量指标数据。</div>
             </div>
         </div>
     </div>
@@ -609,25 +608,7 @@ body {
 </div>
 </div>
 
-<!-- ═══ TAB 2: 时序面板 ═══ -->
-<div class="tab-view" id="tab-timeline">
-    <div style="padding:40px;text-align:center;color:var(--fg-dim)">
-        <div style="font-size:48px;margin-bottom:16px">&#128200;</div>
-        <div style="font-size:14px;margin-bottom:8px">时序面板</div>
-        <div style="font-size:12px">展示人物、事件、世界随轮次的变化趋势</div>
-    </div>
-</div>
-
-<!-- ═══ TAB 3: 对比面板 ═══ -->
-<div class="tab-view" id="tab-compare">
-    <div style="padding:40px;text-align:center;color:var(--fg-dim)">
-        <div style="font-size:48px;margin-bottom:16px">&#9878;&#65039;</div>
-        <div style="font-size:14px;margin-bottom:8px">对比面板</div>
-        <div style="font-size:12px">对比调整前后的人物、事件、世界差异</div>
-    </div>
-</div>
-
-<!-- ═══ TAB 4: 引擎面板 ═══ -->
+<!-- ═══ TAB 2: 引擎面板 ═══ -->
 <div class="tab-view" id="tab-engine">
 <div style="padding:12px 20px;max-width:900px;margin:0 auto;">
 
@@ -635,82 +616,96 @@ body {
 <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;flex-shrink:0;">
     <span style="font-size:11px;color:var(--fg-dark);white-space:nowrap;">查看轮次</span>
     <select id="turn-select" onchange="loadTurn(this.value)" style="flex:1;max-width:200px;background:var(--bg-0);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer;outline:none;">
-        <option value="23">第23轮（当前）</option>
-        <option value="22">第22轮</option>
-        <option value="21">第21轮</option>
-        <option value="20">第20轮</option>
-        <option value="15">第15轮</option>
-        <option value="10">第10轮</option>
-        <option value="5">第5轮</option>
-        <option value="1">第1轮</option>
+        <option value="">—</option>
     </select>
-    <span style="font-size:10px;color:var(--fg-dark);">共23轮 | 事件1,247 | 快照30</span>
+    <span id="turn-stats" style="font-size:10px;color:var(--fg-dark);">—</span>
 </div>
 
 <!-- 该轮次基础信息 -->
-<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">玩家输入</span><span style="color:var(--fg-bright)">"我可以解释..."</span></div>
-    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">皮拉输出</span><span style="color:var(--fg-bright)">*手指敲打桌面* "你到底去了哪里？"</span></div>
-    <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">延迟</span><span style="color:var(--ok)">1.24秒</span></div>
+<div id="engine-info" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;color:var(--fg-dark);font-size:11px;">
+    选择轮次后显示详情
 </div>
 
 <!-- 该轮次的对话记录 -->
 <div class="chain-step" style="margin-bottom:12px;">
-    <div class="chain-step-header"><span class="chain-step-num">&#128172;</span><span class="chain-step-title">第23轮对话</span></div>
-    <div class="chain-step-body">
-        <div style="display:flex;flex-direction:column;gap:6px;">
-            <div style="display:flex;gap:8px;align-items:flex-start;">
-                <span style="font-size:10px;color:var(--info);font-weight:600;min-width:36px;">玩家</span>
-                <span style="font-size:12px;color:var(--fg);flex:1;">我可以解释...事情不是你想的那样。</span>
-            </div>
-            <div style="display:flex;gap:8px;align-items:flex-start;">
-                <span style="font-size:10px;color:var(--accent-light);font-weight:600;min-width:36px;">皮拉</span>
-                <span style="font-size:12px;color:var(--fg-bright);flex:1;"><em style="color:var(--fg-dim)">*手指敲打着桌面，目光移向窗外*</em><br>"你昨晚回来得很晚。你到底去了哪里？"</span>
-            </div>
-        </div>
+    <div class="chain-step-header"><span class="chain-step-num">&#128172;</span><span class="chain-step-title">对话记录</span></div>
+    <div class="chain-step-body" id="engine-dialogue">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无对话记录</div>
     </div>
 </div>
 
 <!-- Step 1: 记忆检索 -->
 <div class="chain-step">
-    <div class="chain-step-header"><span class="chain-step-num">1</span><span class="chain-step-title">记忆检索</span><span class="chain-step-meta">3条命中 / 共47条</span></div>
-    <div class="chain-step-body">
-        <div class="memory-item"><span class="memory-score tag-green">0.92</span><span class="memory-text">第5轮 — 皮拉："我...相信你。"（首次表白）</span></div>
-        <div class="memory-item"><span class="memory-score tag-green">0.85</span><span class="memory-text">第20轮 — 被发现撒谎，皮拉信任度骤降</span></div>
-        <div class="memory-item"><span class="memory-score tag-yellow">0.67</span><span class="memory-text">第15轮 — 共同战斗，配合默契</span></div>
+    <div class="chain-step-header"><span class="chain-step-num">1</span><span class="chain-step-title">记忆检索</span><span class="chain-step-meta">—</span></div>
+    <div class="chain-step-body" id="engine-memory">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无记忆检索数据</div>
     </div>
 </div>
 
 <!-- Step 2: 记忆压缩 -->
 <div class="chain-step">
-    <div class="chain-step-header"><span class="chain-step-num">2</span><span class="chain-step-title">记忆压缩</span><span class="chain-step-meta">3条 → 1条摘要</span></div>
-    <div class="chain-step-body">
-        <div class="compress-before">皮拉曾对玩家表白信任（第5轮），后因子第20轮暴露撒谎而信任骤降，中间有过共同战斗经历。</div>
-        <div class="compress-arrow">&#8595; 压缩</div>
-        <div class="compress-after">皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。</div>
+    <div class="chain-step-header"><span class="chain-step-num">2</span><span class="chain-step-title">记忆压缩</span><span class="chain-step-meta">—</span></div>
+    <div class="chain-step-body" id="engine-compress">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无记忆压缩数据</div>
     </div>
 </div>
 
 <!-- Step 3: 意图识别 -->
 <div class="chain-step">
-    <div class="chain-step-header"><span class="chain-step-num">3</span><span class="chain-step-title">意图识别</span><span class="chain-step-meta">导演模块</span></div>
-    <div class="chain-step-body">
-        <div class="intent-row"><span class="intent-key">玩家输入</span><span class="intent-val">"我可以解释...事情不是你想的那样。"</span></div>
-        <div class="intent-row"><span class="intent-key">识别意图</span><span class="intent-val"><span class="tag tag-purple">辩解</span> <span class="tag tag-yellow">求和</span></span></div>
-        <div class="intent-row"><span class="intent-key">导演指令</span><span class="intent-val" style="color:var(--accent-light)">皮拉不应轻易原谅，需继续施压试探，但内心动摇。</span></div>
+    <div class="chain-step-header"><span class="chain-step-num">3</span><span class="chain-step-title">意图识别</span><span class="chain-step-meta">—</span></div>
+    <div class="chain-step-body" id="engine-intent">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无意图识别数据</div>
     </div>
 </div>
 
 <!-- Step 4: 最终Prompt -->
 <div class="chain-step">
-    <div class="chain-step-header"><span class="chain-step-num">4</span><span class="chain-step-title">最终Prompt</span><span class="chain-step-meta">2,847 tokens</span></div>
-    <div class="chain-step-body">
-        <div class="prompt-section"><div class="prompt-label">System</div><div class="prompt-block">你是皮拉，一名女特工。当前场景：审讯室。你对玩家的态度：基本信任但正在动摇。你内心的矛盾：想相信他但证据确凿。导演指令：继续施压试探，但内心动摇。</div></div>
-        <div class="prompt-section"><div class="prompt-label">Memory</div><div class="prompt-block">[压缩记忆] 皮拉与玩家曾是情侣级信任，因撒谎暴露而骤降至基本信任，目前正经历信任危机。</div></div>
-        <div class="prompt-section"><div class="prompt-label">Recent</div><div class="prompt-block">第22轮 玩家："我真的可以解释。" 皮拉：*沉默片刻* "我在听。"</div></div>
-        <div class="prompt-section"><div class="prompt-label">User</div><div class="prompt-block">玩家说："我可以解释...事情不是你想的那样。"</div></div>
+    <div class="chain-step-header"><span class="chain-step-num">4</span><span class="chain-step-title">最终Prompt</span><span class="chain-step-meta">—</span></div>
+    <div class="chain-step-body" id="engine-prompt">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无Prompt数据</div>
     </div>
 </div>
+
+<!-- Step 5: 9 区块 Prompt 详情（默认折叠） -->
+<div class="chain-step" id="engine-blocks-step" style="display:none;">
+    <div class="chain-step-header" onclick="toggleBlocks(this)" style="cursor:pointer;">
+        <span class="chain-step-num">&#128220;</span>
+        <span class="chain-step-title">9 区块 Prompt 详情</span>
+        <span class="chain-step-meta" id="engine-blocks-meta">点击展开</span>
+    </div>
+    <div class="chain-step-body" id="engine-blocks" style="display:none;">
+        <div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无区块数据</div>
+    </div>
+</div>
+
+</div>
+</div>
+
+<!-- ═══ TAB 3: 运行日志 ═══ -->
+<div class="tab-view" id="tab-logs">
+<div style="padding: 12px 20px; max-width: 1000px; margin: 0 auto; height: 100%; display: flex; flex-direction: column;">
+
+    <!-- 工具栏 -->
+    <div class="log-toolbar">
+        <span style="font-size: 11px; color: var(--fg-dark); white-space: nowrap;">节点过滤</span>
+        <div class="log-filter">
+            <button class="log-filter-btn active" onclick="filterLogs('all')">全部</button>
+            <button class="log-filter-btn" onclick="filterLogs('director')">导演Agent</button>
+            <button class="log-filter-btn" onclick="filterLogs('memory')">记忆检索</button>
+            <button class="log-filter-btn" onclick="filterLogs('character')">角色Agent</button>
+            <button class="log-filter-btn" onclick="filterLogs('review')">ReviewJudge</button>
+            <button class="log-filter-btn" onclick="filterLogs('world')">世界引擎</button>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--fg-dark);">
+            <span id="log-stats-count">节点数: <strong style="color: var(--fg);">0</strong></span>
+            <span id="log-status-indicator" style="color:var(--ok)">● 实时连接中</span>
+        </div>
+    </div>
+
+    <!-- 日志列表 -->
+    <div class="log-container" id="log-container">
+        <div style="color:var(--fg-dark);font-size:11px;padding:20px;text-align:center">暂无运行日志。选择轮次后将显示该轮次的节点执行链路。</div>
+    </div>
 
 </div>
 </div>
@@ -724,7 +719,34 @@ body {
 </div>
 
 <script>
-// ===== 历史轮次数据 =====
+// ===== API 配置 =====
+var API_BASE = '/api';
+var currentSessionId = '';
+
+// 自动推断 session：从 URL hash 或 localStorage 读取
+function getSessionId() {
+    if (currentSessionId) return currentSessionId;
+    var fromHash = window.location.hash.replace('#', '');
+    if (fromHash) { currentSessionId = fromHash; return fromHash; }
+    var fromStorage = localStorage.getItem('aura_session_id');
+    if (fromStorage) { currentSessionId = fromStorage; return fromStorage; }
+    return '';
+}
+
+function setSessionId(sid) {
+    currentSessionId = sid;
+    localStorage.setItem('aura_session_id', sid);
+    window.location.hash = sid;
+}
+
+function apiGet(path) {
+    return fetch(API_BASE + path).then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    });
+}
+
+// ===== 历史轮次数据（API 不可用时回退） =====
 const TURN_HISTORY = {
     23: {
         player: '我可以解释...事情不是你想的那样。',
@@ -802,54 +824,171 @@ const TURN_HISTORY = {
         latency: '0.98秒', tokens: 2100
     }
 };
-function loadTurn(turnNum) {
-    var t = TURN_HISTORY[turnNum];
-    if (!t) return;
-    var steps = document.querySelectorAll('#tab-engine .chain-step');
-    if (steps.length < 5) return;
-    // 0=对话 1=记忆 2=压缩 3=意图 4=Prompt
-    // 更新对话
-    steps[0].querySelector('.chain-step-body').innerHTML =
-        '<div style="display:flex;flex-direction:column;gap:6px;">' +
-        '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--info);font-weight:600;min-width:36px;">玩家</span><span style="font-size:12px;color:var(--fg);flex:1;">' + t.player + '</span></div>' +
-        '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--accent-light);font-weight:600;min-width:36px;">皮拉</span><span style="font-size:12px;color:var(--fg-bright);flex:1;">' + t.char.replace(/\\n/g, '<br>') + '</span></div></div>';
-    steps[0].querySelector('.chain-step-title').textContent = '第' + turnNum + '轮对话';
-    // 更新记忆
-    steps[1].querySelector('.chain-step-body').innerHTML = t.memories.map(function(m) {
-        var c = m.score >= 0.85 ? 'tag-green' : m.score >= 0.6 ? 'tag-yellow' : 'tag-red';
-        return '<div class="memory-item"><span class="memory-score ' + c + '">' + m.score + '</span><span class="memory-text">' + m.text + '</span></div>';
-    }).join('');
-    // 更新压缩
-    if (t.compress) {
-        steps[2].querySelector('.chain-step-body').innerHTML =
-            '<div class="compress-before">' + t.compress.before + '</div>' +
-            '<div class="compress-arrow">&#8595; 压缩</div>' +
-            '<div class="compress-after">' + t.compress.after + '</div>';
+function _renderEngineTurn(t, turnNum) {
+    if (!t || typeof t !== 'object') {
+        showEngineError('引擎数据格式异常，无法渲染');
+        return;
     }
-    // 更新意图
-    if (t.intent) {
-        var tags = t.intent.map(function(i) { return '<span class="tag tag-purple">' + i + '</span>'; }).join(' ');
-        steps[3].querySelector('.chain-step-body').innerHTML =
-            '<div class="intent-row"><span class="intent-key">玩家输入</span><span class="intent-val">"' + t.player + '"</span></div>' +
-            '<div class="intent-row"><span class="intent-key">识别意图</span><span class="intent-val">' + tags + '</span></div>' +
-            '<div class="intent-row"><span class="intent-key">导演指令</span><span class="intent-val" style="color:var(--accent-light)">' + t.directive + '</span></div>';
-    }
-    // 更新Prompt
-    if (t.prompt) {
-        steps[4].querySelector('.chain-step-body').innerHTML =
-            '<div class="prompt-section"><div class="prompt-label">System</div><div class="prompt-block">' + t.prompt.system + '</div></div>' +
-            '<div class="prompt-section"><div class="prompt-label">Memory</div><div class="prompt-block">' + t.prompt.memory + '</div></div>' +
-            '<div class="prompt-section"><div class="prompt-label">Recent</div><div class="prompt-block">' + t.prompt.recent + '</div></div>' +
-            '<div class="prompt-section"><div class="prompt-label">User</div><div class="prompt-block">' + t.prompt.user + '</div></div>';
-        steps[4].querySelector('.chain-step-meta').textContent = t.tokens + ' tokens';
-    }
+
+    var playerText = t.player || '';
+    var charText = t.char || '';
+    var latency = t.latency_ms ? (t.latency_ms / 1000).toFixed(2) + '秒' : (t.latency || '—');
+
     // 更新信息栏
-    var infoBar = document.querySelector('#tab-engine > div > div:nth-child(2)');
+    var infoBar = document.getElementById('engine-info');
     if (infoBar) {
-        infoBar.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">玩家输入</span><span style="color:var(--fg-bright)">"' + (t.player.length > 20 ? t.player.substring(0,20) + '...' : t.player) + '"</span></div>' +
-            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">皮拉输出</span><span style="color:var(--fg-bright)">"' + (t.char.length > 20 ? t.char.substring(0,20)+'...' : t.char) + '"</span></div>' +
-            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">延迟</span><span style="color:var(--ok)">' + t.latency + '</span></div>';
+        infoBar.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">玩家输入</span><span style="color:var(--fg-bright)">"' + (playerText.length > 20 ? playerText.substring(0,20) + '...' : playerText) + '"</span></div>' +
+            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">角色输出</span><span style="color:var(--fg-bright)">"' + (charText.length > 20 ? charText.substring(0,20)+'...' : charText) + '"</span></div>' +
+            '<div style="display:flex;align-items:center;gap:6px;font-size:11px;"><span style="color:var(--fg-dark)">延迟</span><span style="color:var(--ok)">' + latency + '</span></div>';
     }
+
+    // 更新对话标题
+    var dialogueTitle = document.querySelector('#engine-dialogue').previousElementSibling;
+    if (dialogueTitle) dialogueTitle.querySelector('.chain-step-title').textContent = '第' + turnNum + '轮对话';
+
+    // 更新对话内容
+    var dialogueBody = document.getElementById('engine-dialogue');
+    if (dialogueBody) {
+        if (playerText || charText) {
+            dialogueBody.innerHTML =
+                '<div style="display:flex;flex-direction:column;gap:6px;">' +
+                '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--info);font-weight:600;min-width:36px;">玩家</span><span style="font-size:12px;color:var(--fg);flex:1;">' + playerText + '</span></div>' +
+                '<div style="display:flex;gap:8px;align-items:flex-start;"><span style="font-size:10px;color:var(--accent-light);font-weight:600;min-width:36px;">角色</span><span style="font-size:12px;color:var(--fg-bright);flex:1;">' + charText.replace(/\\n/g, '<br>') + '</span></div></div>';
+        } else {
+            dialogueBody.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无对话记录</div>';
+        }
+    }
+
+    // 更新记忆
+    var memories = t.memories || [];
+    var memBody = document.getElementById('engine-memory');
+    var memHeader = memBody ? memBody.previousElementSibling : null;
+    if (memBody) {
+        if (memories.length > 0) {
+            memBody.innerHTML = memories.map(function(m) {
+                var c = m.score >= 0.85 ? 'tag-green' : m.score >= 0.6 ? 'tag-yellow' : 'tag-red';
+                return '<div class="memory-item"><span class="memory-score ' + c + '">' + m.score + '</span><span class="memory-text">' + m.text + '</span></div>';
+            }).join('');
+            if (memHeader) memHeader.querySelector('.chain-step-meta').textContent = memories.length + '条命中';
+        } else {
+            memBody.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无记忆检索数据</div>';
+            if (memHeader) memHeader.querySelector('.chain-step-meta').textContent = '—';
+        }
+    }
+
+    // 更新压缩
+    var compressBody = document.getElementById('engine-compress');
+    var compressHeader = compressBody ? compressBody.previousElementSibling : null;
+    if (compressBody) {
+        if (t.compress && t.compress.before) {
+            compressBody.innerHTML =
+                '<div class="compress-before">' + t.compress.before + '</div>' +
+                '<div class="compress-arrow">&#8595; 压缩</div>' +
+                '<div class="compress-after">' + t.compress.after + '</div>';
+            if (compressHeader) compressHeader.querySelector('.chain-step-meta').textContent = '已压缩';
+        } else {
+            compressBody.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无记忆压缩数据</div>';
+            if (compressHeader) compressHeader.querySelector('.chain-step-meta').textContent = '—';
+        }
+    }
+
+    // 更新意图（兼容字符串和数组）
+    var rawIntent = t.intent || [];
+    var intent = Array.isArray(rawIntent) ? rawIntent : (typeof rawIntent === 'string' && rawIntent.trim() ? [rawIntent] : []);
+    var intentBody = document.getElementById('engine-intent');
+    var intentHeader = intentBody ? intentBody.previousElementSibling : null;
+    if (intentBody) {
+        if (intent.length > 0) {
+            var tags = intent.map(function(i) { return '<span class="tag tag-purple">' + i + '</span>'; }).join(' ');
+            intentBody.innerHTML =
+                '<div class="intent-row"><span class="intent-key">玩家输入</span><span class="intent-val">"' + playerText + '"</span></div>' +
+                '<div class="intent-row"><span class="intent-key">识别意图</span><span class="intent-val">' + tags + '</span></div>' +
+                '<div class="intent-row"><span class="intent-key">导演指令</span><span class="intent-val" style="color:var(--accent-light)">' + (t.directive || '') + '</span></div>';
+            if (intentHeader) intentHeader.querySelector('.chain-step-meta').textContent = intent.join(', ');
+        } else {
+            intentBody.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无意图识别数据</div>';
+            if (intentHeader) intentHeader.querySelector('.chain-step-meta').textContent = '—';
+        }
+    }
+
+    // 更新Prompt
+    var promptBody = document.getElementById('engine-prompt');
+    var promptHeader = promptBody ? promptBody.previousElementSibling : null;
+    if (promptBody) {
+        if (t.prompt) {
+            promptBody.innerHTML =
+                '<div class="prompt-section"><div class="prompt-label">System</div><div class="prompt-block">' + escapeHtml(t.prompt.system || '') + '</div></div>' +
+                '<div class="prompt-section"><div class="prompt-label">Memory</div><div class="prompt-block">' + escapeHtml(t.prompt.memory || '') + '</div></div>' +
+                '<div class="prompt-section"><div class="prompt-label">Recent</div><div class="prompt-block">' + escapeHtml(t.prompt.recent || '') + '</div></div>' +
+                '<div class="prompt-section"><div class="prompt-label">User</div><div class="prompt-block">' + escapeHtml(t.prompt.user || playerText) + '</div></div>';
+            if (promptHeader) promptHeader.querySelector('.chain-step-meta').textContent = (t.tokens || 0) + ' tokens';
+        } else {
+            promptBody.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:6px 0">暂无Prompt数据</div>';
+            if (promptHeader) promptHeader.querySelector('.chain-step-meta').textContent = '—';
+        }
+    }
+
+    // Step 5: 9 区块 Prompt 详情
+    var blocks = t.blocks || [];
+    var blocksStep = document.getElementById('engine-blocks-step');
+    var blocksBody = document.getElementById('engine-blocks');
+    var blocksMeta = document.getElementById('engine-blocks-meta');
+    if (blocksStep && blocksBody && blocks.length > 0) {
+        blocksStep.style.display = '';
+        var html = '';
+        blocks.forEach(function(block, idx) {
+            var title = '区块 ' + (idx + 1);
+            var lines = block.split('\n');
+            if (lines[0] && lines[0].startsWith('[') && lines[0].indexOf(']') > 0) {
+                title = lines[0].substring(1, lines[0].indexOf(']'));
+                lines = lines.slice(1);
+            }
+            var content = lines.join('\n').trim() || '(空)';
+            html += '<div class="prompt-section"><div class="prompt-label">' + title + '</div><div class="prompt-block">' + escapeHtml(content) + '</div></div>';
+        });
+        blocksBody.innerHTML = html;
+        if (blocksMeta) blocksMeta.textContent = blocks.length + ' 个区块';
+    } else if (blocksStep) {
+        blocksStep.style.display = 'none';
+    }
+}
+
+function loadTurn(turnNum) {
+    // 更新 header 轮次
+    var metaTurn = document.getElementById('meta-turn');
+    var turnSelect = document.getElementById('turn-select');
+    var total = turnSelect ? turnSelect.options.length : 0;
+    if (metaTurn && turnNum !== '') metaTurn.textContent = turnNum + ' / ' + total;
+
+    var sid = getSessionId();
+    if (sid && turnNum !== '') {
+        apiGet('/session/' + sid + '/engine/' + turnNum)
+            .then(function(data) {
+                if (data && data.error) {
+                    showEngineError('API 错误: ' + data.error);
+                    return;
+                }
+                _renderEngineTurn(data, turnNum);
+            })
+            .catch(function(err) {
+                console.error('loadTurn API 失败:', err);
+                showEngineError('引擎数据加载失败: ' + (err && err.message ? err.message : '请检查网络或刷新页面'));
+                // API 失败，回退到 mock 数据
+                var t = TURN_HISTORY[turnNum];
+                if (t) _renderEngineTurn(t, turnNum);
+            });
+    } else {
+        var t = TURN_HISTORY[turnNum];
+        if (t) _renderEngineTurn(t, turnNum);
+    }
+}
+
+function showEngineError(msg) {
+    var ids = ['engine-dialogue', 'engine-memory', 'engine-compress', 'engine-intent', 'engine-prompt'];
+    ids.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.innerHTML = '<div style="color:var(--alert);font-size:11px;padding:6px 0">' + msg + '</div>';
+    });
 }
 
 // ===== 关系数据 =====
@@ -862,11 +1001,11 @@ const RELATIONS = [
     {from:'导师', to:'皮拉', type:'养父女', level:'trust-deep', label:'保护+愧疚', tags:[]},
     {from:'导师', to:'玩家', type:'陌生人', level:'trust-cautious', label:'警惕+试探', tags:[]}
 ];
-function renderRelations(charName) {
+function _renderRelationsHtml(charName, relations) {
     var container = document.getElementById('relation-content');
     if (!container) return;
-    var outEdges = RELATIONS.filter(function(r) { return r.from === charName; });
-    var inEdges = RELATIONS.filter(function(r) { return r.to === charName; });
+    var outEdges = relations.filter(function(r) { return r.from === charName; });
+    var inEdges = relations.filter(function(r) { return r.to === charName; });
     var html = '';
     if (outEdges.length > 0) {
         html += '<div class="rel-section"><div class="rel-section-title">' + charName + ' 如何看待他人</div>';
@@ -885,6 +1024,25 @@ function renderRelations(charName) {
         html += '</div>';
     }
     container.innerHTML = html || '<div style="color:var(--fg-dark);font-size:11px;">暂无关系数据</div>';
+}
+
+function renderRelations(charName) {
+    var sid = getSessionId();
+    if (sid) {
+        // 尝试从 API 获取所有角色关系
+        var charId = document.getElementById('char-select').value;
+        apiGet('/session/' + sid + '/character/' + charId + '/relations')
+            .then(function(res) {
+                if (res.relations && res.relations.length > 0) {
+                    _renderRelationsHtml(charName, res.relations);
+                } else {
+                    _renderRelationsHtml(charName, RELATIONS);
+                }
+            })
+            .catch(function() { _renderRelationsHtml(charName, RELATIONS); });
+    } else {
+        _renderRelationsHtml(charName, RELATIONS);
+    }
 }
 
 // ===== 角色数据 =====
@@ -951,26 +1109,47 @@ const CHAR_DATA = {
     }
 };
 
+function _renderLayers(layers) {
+    var grid = document.querySelector('.layer-grid');
+    if (!grid || !layers) return;
+    grid.innerHTML = layers.map(function(l) {
+        var barHtml = l.bar ? '<div class="layer-bar"><div class="layer-bar-fill" style="width:' + l.bar + '%;background:var(--ok)"></div></div>' : '';
+        var noteHtml = l.note ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:4px">' + l.note + '</div>' : '';
+        var barLabelHtml = l.barLabel ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:2px">' + l.barLabel + '</div>' : '';
+        return '<div class="layer-item"><div class="layer-item-header"><span class="layer-name">' + l.name + '</span><span class="layer-status ' + l.status + '">' + (l.status === 'ok' ? '&#10003;' : '!') + '</span></div><div class="layer-value">' + l.value + '</div>' + barHtml + barLabelHtml + noteHtml + '</div>';
+    }).join('');
+}
+
 function switchChar(charId) {
     var data = CHAR_DATA[charId];
     if (!data) return;
     // 更新角色标签
     var badge = document.getElementById('char-role-badge');
-    badge.textContent = data.role;
-    badge.className = 'tag ' + data.roleTag;
-    if (charId === 'guard') badge.style.display = 'none';
-    else badge.style.display = '';
+    if (badge) {
+        badge.textContent = data.role;
+        badge.className = 'tag ' + data.roleTag;
+        if (charId === 'guard') badge.style.display = 'none';
+        else badge.style.display = '';
+    }
+    // 更新 header 角色名
+    var metaChar = document.getElementById('meta-char');
+    if (metaChar) metaChar.textContent = data.name || '—';
     // 重新渲染关系
     renderRelations(data.name);
-    // 重新渲染八层
-    var grid = document.querySelector('.layer-grid');
-    if (grid && data.layers) {
-        grid.innerHTML = data.layers.map(function(l) {
-            var barHtml = l.bar ? '<div class="layer-bar"><div class="layer-bar-fill" style="width:' + l.bar + '%;background:var(--ok)"></div></div>' : '';
-            var noteHtml = l.note ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:4px">' + l.note + '</div>' : '';
-            var barLabelHtml = l.barLabel ? '<div style="font-size:10px;color:var(--fg-dark);margin-top:2px">' + l.barLabel + '</div>' : '';
-            return '<div class="layer-item"><div class="layer-item-header"><span class="layer-name">' + l.name + '</span><span class="layer-status ' + l.status + '">' + (l.status === 'ok' ? '&#10003;' : '!') + '</span></div><div class="layer-value">' + l.value + '</div>' + barHtml + barLabelHtml + noteHtml + '</div>';
-        }).join('');
+    // 重新渲染八层（优先 API，回退 mock）
+    var sid = getSessionId();
+    if (sid) {
+        apiGet('/session/' + sid + '/character/' + charId + '/layers')
+            .then(function(res) {
+                if (res.layers && res.layers.length > 0) {
+                    _renderLayers(res.layers);
+                } else {
+                    _renderLayers(data.layers);
+                }
+            })
+            .catch(function() { _renderLayers(data.layers); });
+    } else {
+        _renderLayers(data.layers);
     }
 }
 
@@ -984,13 +1163,450 @@ function toggleCard(cardId) {
     var card = document.getElementById(cardId);
     if (card) card.classList.toggle('expanded');
 }
+// ===== 加载实时面板数据 =====
+function loadDashboard(sid) {
+    if (!sid) return;
+
+    // 更新 header 会话ID
+    var metaSession = document.getElementById('meta-session');
+    if (metaSession) metaSession.textContent = sid.substring(0, 12);
+
+    // 1. 加载角色列表
+    apiGet('/session/' + sid + '/characters')
+        .then(function(res) {
+            var chars = res.characters || [];
+            var select = document.getElementById('char-select');
+            if (select && chars.length > 0) {
+                select.innerHTML = '';
+                chars.forEach(function(ch) {
+                    var opt = document.createElement('option');
+                    opt.value = ch.id;
+                    opt.textContent = ch.name;
+                    select.appendChild(opt);
+                });
+                // 加载第一个角色的数据
+                var firstChar = chars[0];
+                var badge = document.getElementById('char-role-badge');
+                if (badge) {
+                    badge.textContent = firstChar.role || '角色';
+                    badge.className = 'tag ' + (firstChar.role_tag || 'tag-purple');
+                }
+                // 更新 header 角色名
+                var metaChar = document.getElementById('meta-char');
+                if (metaChar) metaChar.textContent = firstChar.name || '—';
+                // 加载八层
+                return apiGet('/session/' + sid + '/character/' + firstChar.id + '/layers');
+            } else if (select) {
+                select.innerHTML = '<option>暂无角色</option>';
+                _renderLayers([]);
+            }
+        })
+        .then(function(layerRes) {
+            if (layerRes && layerRes.layers && layerRes.layers.length > 0) {
+                _renderLayers(layerRes.layers);
+            } else {
+                _renderLayers([
+                    {name:'一层 体格', status:'ok', value:'（暂无数据）'},
+                    {name:'二层 声纹', status:'ok', value:'（暂无数据）'},
+                    {name:'三层 根源', status:'ok', value:'（暂无数据）'},
+                    {name:'四层 人际', status:'ok', value:'（暂无数据）'},
+                    {name:'五层 核心', status:'ok', value:'（暂无数据）'},
+                    {name:'六层 张力', status:'ok', value:'（暂无数据）'},
+                    {name:'七层 轨迹', status:'ok', value:'（暂无数据）'},
+                    {name:'八层 钩子', status:'ok', value:'（暂无数据）'}
+                ]);
+            }
+            // 加载关系
+            var charId = document.getElementById('char-select').value;
+            return apiGet('/session/' + sid + '/character/' + charId + '/relations');
+        })
+        .then(function(relRes) {
+            var charId = document.getElementById('char-select').value;
+            var charName = document.querySelector('#char-select option[value="' + charId + '"]');
+            charName = charName ? charName.textContent : charId;
+            if (relRes && relRes.relations && relRes.relations.length > 0) {
+                _renderRelationsHtml(charName, relRes.relations);
+            } else {
+                document.getElementById('relation-content').innerHTML =
+                    '<div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无关系数据。进行角色扮演对话后将自动记录。</div>';
+            }
+            // 加载世界状态
+            return apiGet('/session/' + sid + '/world');
+        })
+        .then(function(worldRes) {
+            if (worldRes) {
+                _renderWorld(worldRes);
+            }
+            // 加载最新事件
+            return apiGet('/session/' + sid + '/events/latest');
+        })
+        .then(function(eventRes) {
+            if (eventRes && !eventRes.error) {
+                _renderEvent(eventRes);
+            }
+            // 加载轮次列表（引擎面板）
+            return apiGet('/session/' + sid + '/turns');
+        })
+        .then(function(turnsRes) {
+            if (turnsRes && turnsRes.turns) {
+                var select = document.getElementById('turn-select');
+                var stats = document.getElementById('turn-stats');
+                var total = turnsRes.turns.length;
+                if (stats) stats.textContent = '共' + total + '轮';
+                if (select) {
+                    select.innerHTML = '';
+                    if (total === 0) {
+                        var opt = document.createElement('option');
+                        opt.value = '';
+                        opt.textContent = '—';
+                        select.appendChild(opt);
+                    } else {
+                        turnsRes.turns.forEach(function(t) {
+                            var opt = document.createElement('option');
+                            opt.value = t.turn_num;
+                            opt.textContent = '第' + t.turn_num + '轮' + (t.fallback_triggered ? ' (fallback)' : '');
+                            select.appendChild(opt);
+                        });
+                        select.value = turnsRes.turns[0].turn_num;
+                        loadTurn(turnsRes.turns[0].turn_num);
+                        // 更新 header 轮次
+                        var metaTurn = document.getElementById('meta-turn');
+                        if (metaTurn) metaTurn.textContent = turnsRes.turns[0].turn_num + ' / ' + total;
+                        // 更新 header 模型
+                        var metaModel = document.getElementById('meta-model');
+                        if (metaModel && turnsRes.turns[0].backend) metaModel.textContent = turnsRes.turns[0].backend;
+                    }
+                }
+            }
+        })
+        .catch(function(err) {
+            console.log('Dashboard 加载失败:', err);
+        });
+}
+
+// 渲染世界状态
+function _renderWorld(world) {
+    var loc = world.location || {};
+    var physical = world.physical || {};
+    var entities = world.present_entities || [];
+    var rules = world.active_rules || [];
+
+    // 更新场景信息
+    var worldGrid = document.querySelector('.world-grid');
+    if (!worldGrid) return;
+
+    var locationHtml = '<div class="world-section">' +
+        '<div class="world-section-header"><span class="icon">&#127758;</span> 场景</div>' +
+        '<div class="world-item"><span class="key">标识：</span> <span class="value">' + (loc.id || '—') + '</span></div>' +
+        '<div class="world-item"><span class="key">名称：</span> <span class="value">' + (loc.name || '未加载') + '</span></div>' +
+        '<div class="world-desc">' + (loc.description || '暂无场景描述') + '</div>' +
+        '</div>';
+
+    var physicalHtml = '<div class="world-section">' +
+        '<div class="world-section-header"><span class="icon">&#9881;&#65039;</span> 物理状态</div>' +
+        '<div class="world-item"><span class="key">灯光：</span> <span class="value">' + (physical.lighting || '—') + '</span></div>' +
+        '<div class="world-item"><span class="key">温度：</span> <span class="value">' + (physical.temperature || '—') + '</span></div>' +
+        '<div class="world-item"><span class="key">门锁：</span> <span class="value">' + (physical.locked ? '已锁' : '未锁') + '</span></div>' +
+        '</div>';
+
+    var entitiesHtml = '<div class="world-section">' +
+        '<div class="world-section-header"><span class="icon">&#128101;</span> 在场角色</div>';
+    if (entities.length > 0) {
+        entities.forEach(function(e) {
+            entitiesHtml += '<div class="world-item"><span class="value">' + (e.name || e.id || '—') + '</span></div>';
+        });
+    } else {
+        entitiesHtml += '<div class="world-item"><span class="value" style="color:var(--fg-dark)">暂无角色</span></div>';
+    }
+    entitiesHtml += '</div>';
+
+    var rulesHtml = '<div class="world-section">' +
+        '<div class="world-section-header"><span class="icon">&#128220;</span> 生效规则</div>';
+    if (rules.length > 0) {
+        rules.forEach(function(r) {
+            rulesHtml += '<div class="world-rule">' + (r.description || r.id || '—') + '</div>';
+        });
+    } else {
+        rulesHtml += '<div class="world-item" style="color:var(--fg-dark)">暂无规则</div>';
+    }
+    rulesHtml += '</div>';
+
+    worldGrid.innerHTML = locationHtml +
+        '<div class="world-divider"></div>' + physicalHtml +
+        '<div class="world-divider"></div>' + entitiesHtml +
+        '<div class="world-divider"></div>' + rulesHtml;
+}
+
+// 渲染事件
+function _renderEvent(evt) {
+    var card = document.querySelector('#card-event .event-patch-card');
+    if (!card) return;
+    card.innerHTML =
+        '<div class="event-id-row">' +
+        '<span class="event-id">' + (evt.event_id || '—') + '</span>' +
+        '<span class="event-type-badge">' + (evt.event_type || '对话') + '</span>' +
+        '</div>' +
+        '<div class="event-kv">' +
+        '<div class="event-kv-item"><span class="event-kv-key">发起者</span><span class="event-kv-value">' + (evt.initiator || '—') + '</span></div>' +
+        '<div class="event-kv-item"><span class="event-kv-key">目标</span><span class="event-kv-value">' + (evt.target || '—') + '</span></div>' +
+        '<div class="event-kv-item"><span class="event-kv-key">意图</span><span class="event-kv-value">' + ((evt.intent || []).map(function(i){return '<span class="tag tag-purple">'+i+'</span>';}).join(' ') || '—') + '</span></div>' +
+        '<div class="event-kv-item"><span class="event-kv-key">可见性</span><span class="event-kv-value" style="color:var(--ok)">' + (evt.visibility || '公开') + '</span></div>' +
+        '</div>';
+}
+
+// ===== 初始化 =====
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('card-layer').classList.add('expanded');
     document.getElementById('card-relation').classList.add('expanded');
     document.getElementById('card-event').classList.add('expanded');
     document.getElementById('card-causal').classList.add('expanded');
-    renderRelations('皮拉');
+
+    // 尝试从 API 获取会话列表，自动选择最近会话并加载全部面板
+    apiGet('/sessions')
+        .then(function(res) {
+            if (res.sessions && res.sessions.length > 0) {
+                var s = res.sessions[0];
+                setSessionId(s.session_id);
+                // 更新 header 会话信息
+                var sessionMeta = document.querySelector('.header-meta .value');
+                if (sessionMeta) sessionMeta.textContent = s.session_id.substring(0, 12);
+                // 加载全部面板
+                loadDashboard(s.session_id);
+            } else {
+                // 没有会话数据
+                _renderLayers([
+                    {name:'一层 体格', status:'ok', value:'（暂无数据）'},
+                    {name:'二层 声纹', status:'ok', value:'（暂无数据）'},
+                    {name:'三层 根源', status:'ok', value:'（暂无数据）'},
+                    {name:'四层 人际', status:'ok', value:'（暂无数据）'},
+                    {name:'五层 核心', status:'ok', value:'（暂无数据）'},
+                    {name:'六层 张力', status:'ok', value:'（暂无数据）'},
+                    {name:'七层 轨迹', status:'ok', value:'（暂无数据）'},
+                    {name:'八层 钩子', status:'ok', value:'（暂无数据）'}
+                ]);
+                document.getElementById('relation-content').innerHTML =
+                    '<div style="color:var(--fg-dark);font-size:11px;padding:10px 0">暂无关系数据</div>';
+            }
+        })
+        .catch(function(err) {
+            console.log('API 不可用:', err);
+            // API 完全不可用时，保留 mock 数据作为演示
+            renderRelations('皮拉');
+        });
+
+    // 启动实时日志流（无论会话是否加载成功）
+    startLogStream('all');
 });
+
+// ===== 日志详情展开 =====
+function toggleLogDetail(entry) {
+    var panel = entry.nextElementSibling;
+    if (!panel || !panel.classList.contains('log-detail-panel')) return;
+    var isExpanded = panel.classList.contains('expanded');
+    // Close all other panels
+    document.querySelectorAll('.log-detail-panel.expanded').forEach(function(p) {
+        if (p !== panel) {
+            p.classList.remove('expanded');
+            if (p.previousElementSibling) p.previousElementSibling.classList.remove('expanded');
+        }
+    });
+    if (isExpanded) {
+        panel.classList.remove('expanded');
+        entry.classList.remove('expanded');
+    } else {
+        panel.classList.add('expanded');
+        entry.classList.add('expanded');
+    }
+}
+
+// ===== 9 区块 Prompt 展开/折叠 =====
+function toggleBlocks(header) {
+    var body = document.getElementById('engine-blocks');
+    var meta = document.getElementById('engine-blocks-meta');
+    if (!body) return;
+    var isHidden = body.style.display === 'none';
+    if (isHidden) {
+        body.style.display = 'block';
+        if (meta) meta.textContent = '点击折叠';
+    } else {
+        body.style.display = 'none';
+        if (meta) meta.textContent = '点击展开';
+    }
+}
+
+// ===== 运行日志过滤 =====
+// ===== 实时日志流（SSE） =====
+var logEventSource = null;
+var currentLogFilter = 'all';
+var logEntryCount = 0;
+
+function startLogStream(nodeFilter) {
+    nodeFilter = nodeFilter || 'all';
+    currentLogFilter = nodeFilter;
+
+    // 关闭旧连接
+    if (logEventSource) {
+        logEventSource.close();
+        logEventSource = null;
+    }
+
+    // 清空容器并显示加载中
+    var container = document.getElementById('log-container');
+    container.innerHTML = '<div style="color:var(--fg-dark);font-size:11px;padding:20px;text-align:center">连接日志流...</div>';
+
+    var url = API_BASE + '/logs/stream?node=' + encodeURIComponent(nodeFilter);
+    logEventSource = new EventSource(url);
+
+    logEventSource.onopen = function() {
+        var indicator = document.getElementById('log-status-indicator');
+        if (indicator) {
+            indicator.innerHTML = '&#9679; 实时连接中';
+            indicator.style.color = 'var(--ok)';
+        }
+    };
+
+    logEventSource.onmessage = function(e) {
+        if (!e.data || e.data === '{}') return;  // 心跳
+        try {
+            var data = JSON.parse(e.data);
+            appendLogEntry(data);
+        } catch (err) {
+            console.log('日志解析失败:', e.data);
+        }
+    };
+
+    logEventSource.onerror = function() {
+        var indicator = document.getElementById('log-status-indicator');
+        if (indicator) {
+            indicator.innerHTML = '&#9679; 连接断开，5秒后重连...';
+            indicator.style.color = 'var(--alert)';
+        }
+        // 5秒后重连
+        setTimeout(function() {
+            if (logEventSource && logEventSource.readyState === EventSource.CLOSED) {
+                startLogStream(currentLogFilter);
+            }
+        }, 5000);
+    };
+}
+
+function stopLogStream() {
+    if (logEventSource) {
+        logEventSource.close();
+        logEventSource = null;
+    }
+    var indicator = document.getElementById('log-status-indicator');
+    if (indicator) {
+        indicator.innerHTML = '&#9679; 已断开';
+        indicator.style.color = 'var(--fg-dark)';
+    }
+}
+
+function appendLogEntry(data) {
+    var container = document.getElementById('log-container');
+    if (!container) return;
+
+    // 如果是第一条，清空提示
+    if (logEntryCount === 0) {
+        container.innerHTML = '';
+    }
+    logEntryCount++;
+
+    // 更新统计
+    var statCount = document.getElementById('log-stats-count');
+    if (statCount) statCount.innerHTML = '节点数: <strong style="color: var(--fg);">' + logEntryCount + '</strong>';
+
+    // 节点类型样式映射
+    var badgeClass = 'log-node-' + (data.node || 'system');
+    var nodeLabels = {
+        director: '导演Agent', memory: '记忆检索', character: '角色Agent',
+        review: 'ReviewJudge', world: '世界引擎', system: '系统'
+    };
+    var nodeLabel = nodeLabels[data.node] || data.node;
+
+    // 状态样式
+    var statusIcon = data.status === 'error' ? '&#10007;' : data.status === 'warn' ? '!' : '&#10003;';
+    var statusClass = data.status || 'ok';
+
+    // 构建日志条目 HTML（可点击展开详情）
+    var fullAction = data.full_action || data.action || '';
+    var hasDetail = fullAction.length > (data.action || '').length;
+    var entryHtml =
+        '<div class="log-entry" onclick="toggleLogDetail(this)" data-node="' + (data.node || 'system') + '" style="display:' + (currentLogFilter !== 'all' && currentLogFilter !== data.node ? 'none' : 'flex') + '">' +
+        '<span class="log-time">' + (data.time || '—') + '</span>' +
+        '<span class="log-node"><span class="log-node-badge ' + badgeClass + '">' + nodeLabel + '</span></span>' +
+        '<span class="log-action">' + escapeHtml(data.action || '') + '</span>' +
+        '<span class="log-detail">' + escapeHtml(data.detail || '') + '</span>' +
+        '<span class="log-duration">' + (data.duration || '—') + '</span>' +
+        '<span class="log-status ' + statusClass + '">' + statusIcon + '</span>' +
+        '<span class="log-expand">&#9660;</span>' +
+        '</div>';
+
+    // 详情面板（默认隐藏）
+    var detailHtml = '';
+    if (hasDetail || fullAction.length > 50) {
+        detailHtml =
+            '<div class="log-detail-panel">' +
+            '<div class="log-prompt-header">' +
+            '<span class="log-prompt-title">日志详情</span>' +
+            '<span class="log-prompt-meta">' + nodeLabel + ' | ' + (data.time || '—') + '</span>' +
+            '</div>' +
+            '<div class="log-prompt-section">' +
+            '<div class="log-prompt-label">完整消息</div>' +
+            '<div class="log-prompt-block">' + escapeHtml(fullAction) + '</div>' +
+            '</div>' +
+            '</div>';
+    }
+
+    // 追加到容器
+    container.insertAdjacentHTML('beforeend', entryHtml + detailHtml);
+
+    // 自动滚动到底部
+    container.scrollTop = container.scrollHeight;
+
+    // 限制最大条目数（防止内存泄漏）
+    var entries = container.querySelectorAll('.log-entry');
+    if (entries.length > 500) {
+        for (var i = 0; i < entries.length - 500; i++) {
+            entries[i].remove();
+        }
+    }
+}
+
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function filterLogs(nodeType) {
+    currentLogFilter = nodeType;
+
+    // Update active button
+    document.querySelectorAll('.log-filter-btn').forEach(function(btn) {
+        btn.classList.remove('active');
+        if (btn.textContent.includes('全部') && nodeType === 'all') btn.classList.add('active');
+        else if (btn.textContent.includes('导演') && nodeType === 'director') btn.classList.add('active');
+        else if (btn.textContent.includes('记忆') && nodeType === 'memory') btn.classList.add('active');
+        else if (btn.textContent.includes('角色') && nodeType === 'character') btn.classList.add('active');
+        else if (btn.textContent.includes('Review') && nodeType === 'review') btn.classList.add('active');
+        else if (btn.textContent.includes('世界') && nodeType === 'world') btn.classList.add('active');
+    });
+
+    // Filter visible entries
+    document.querySelectorAll('.log-entry').forEach(function(entry) {
+        if (nodeType === 'all') {
+            entry.style.display = 'flex';
+        } else {
+            var entryNode = entry.getAttribute('data-node');
+            entry.style.display = (entryNode === nodeType) ? 'flex' : 'none';
+        }
+    });
+
+    // 重新连接 SSE 并带上过滤参数（减少传输量）
+    startLogStream(nodeType);
+}
+
 </script>
 
 </body>

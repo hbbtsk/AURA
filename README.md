@@ -273,7 +273,7 @@ echo "DEEPSEEK_API_KEY=sk-your-key" > .env
 
 # Start Mode A (Prompt Compiler)
 python -m app.main
-# Then connect TAVO to: http://localhost:8000/v1/chat/completions
+# Then connect TAVO to: http://localhost:8080/v1/chat/completions
 ```
 
 > **Note**: The current version is a skeleton. It runs, but results may not yet surpass native ST. We are validating architecture, not delivering product.

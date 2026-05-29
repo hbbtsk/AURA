@@ -20,7 +20,7 @@ import requests
 # ------------------------------------------------------------------
 # 配置
 # ------------------------------------------------------------------
-BASE_URL = "http://127.0.0.1:8000/debug"
+BASE_URL = "http://127.0.0.1:8080/debug"
 DEFAULT_REFRESH_INTERVAL = 2  # 自动刷新间隔（秒）
 
 
@@ -35,7 +35,7 @@ def _fetch_latest() -> dict:
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.ConnectionError:
-        return {"error": "无法连接到 AURA 后端（请确认服务已启动在 :8000）"}
+        return {"error": "无法连接到 AURA 后端（请确认服务已启动在 :8080）"}
     except requests.exceptions.Timeout:
         return {"error": "请求超时（后端响应慢）"}
     except requests.exceptions.HTTPError as e:
@@ -304,7 +304,7 @@ with gr.Blocks(title="AURA 维测系统") as demo:
 
     gr.Markdown("---")
     gr.Markdown(
-        "**提示**：确保 AURA 后端已启动在 `http://127.0.0.1:8000`，"
+        "**提示**：确保 AURA 后端已启动在 `http://127.0.0.1:8080`，"
         "且 `/debug` 路由已挂载。"
     )
 

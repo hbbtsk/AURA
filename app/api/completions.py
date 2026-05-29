@@ -37,6 +37,7 @@ from app.api.router import (
 from app.world import world_runtime
 from app.director import director
 from app.npc import NPCAgent
+from app.debug.turn_recorder import turn_recorder
 
 # 初始化全局日志配置
 setup_logging()
@@ -177,6 +178,8 @@ async def _stream_llm_direct(
     user_content: str = "",
     tavo_dialogue: list = None,
     round_num: int = 0,
+    turn_record=None,
+    start_time: float = 0.0,
 ) -> StreamingResponse:
     """
     流式调用 LLM，边收 chunk 边转发给 TAVO。
@@ -380,6 +383,29 @@ async def _stream_llm_direct(
                 session_id, round_num, user_content, assistant_content, tavo_dialogue or []
             )
 
+        # === 维测：记录流式 LLM 响应并提交 ===
+        if turn_record is not None:
+            llm_payload = {
+                "model": model_name or "deepseek-v4-flash",
+                "messages": messages_list,
+                "temperature": temperature,
+                "stream": True,
+            }
+            if max_tokens:
+                llm_payload["max_tokens"] = max_tokens
+            turn_recorder.set_llm_payload(turn_record, llm_payload)
+            turn_recorder.set_llm_response(
+                turn_record,
+                content=assistant_content,
+                reasoning_content="",
+                raw_response=None,
+                actual_backend=actual_backend,
+                fallback_triggered=fallback_triggered,
+                fallback_reason=fallback_reason,
+            )
+            total_latency = (_time.time() - start_time) * 1000 if start_time else 0.0
+            turn_recorder.commit(turn_record, response_content=assistant_content, latency_ms=total_latency)
+
     return StreamingResponse(
         stream_generator(),
         media_type="text/event-stream",
@@ -464,6 +490,17 @@ async def chat_completion(
             user_content = msg.content
             break
 
+    # === 维测：创建轮次记录 ===
+    turn_record = turn_recorder.start_turn(
+        session_id=session_id,
+        turn_num=0,  # 将在 LangGraph 后更新
+        mode="chat",
+        player_input=user_content,
+        backend=backend,
+        model=request.model,
+        temperature=request.temperature or 0.7,
+    )
+
     # ============================================================
     # 2. LangGraph 工作流：Prompt 编译
     # ============================================================
@@ -513,6 +550,11 @@ async def chat_completion(
     for log in node_logs:
         logger.info(f"  → {log['node']}: {log['elapsed_ms']}ms | {log.get('summary', '')}")
 
+    # === 维测：记录 Prompt 编译产物 ===
+    turn_record.turn_num = final_state.get("round_num", 0)
+    turn_recorder.set_prompt_compiled(turn_record, final_state)
+    turn_recorder.set_quality_check(turn_record, final_state)
+
     # ============================================================
     # 3. 直接调用 LLM（流式/非流式）
     # ============================================================
@@ -531,6 +573,8 @@ async def chat_completion(
             user_content=user_content,
             tavo_dialogue=final_state.get("tavo_dialogue_messages", []),
             round_num=final_state.get("round_num", 0),
+            turn_record=turn_record,
+            start_time=initial_state.get("start_time", _time.time()),
         )
     else:
         # 非流式：等待完整响应
@@ -586,6 +630,28 @@ async def chat_completion(
 
         logger.info(f"[AURA→TAVO] 返回响应 | 会话: {session_id} | 内容: {len(content)}字")
 
+        # === 维测：记录 LLM 响应并提交 ===
+        llm_payload = {
+            "model": request.model,
+            "messages": messages_list,
+            "temperature": request.temperature or 0.7,
+            "stream": False,
+        }
+        if request.max_tokens:
+            llm_payload["max_tokens"] = request.max_tokens
+        turn_recorder.set_llm_payload(turn_record, llm_payload)
+        turn_recorder.set_llm_response(
+            turn_record,
+            content=content,
+            reasoning_content=reasoning_content,
+            raw_response=raw_response,
+            actual_backend=actual_backend,
+            fallback_triggered=fallback_triggered,
+            fallback_reason=fallback_reason,
+        )
+        total_latency = (_time.time() - initial_state.get("start_time", _time.time())) * 1000
+        turn_recorder.commit(turn_record, response_content=content, latency_ms=total_latency)
+
         # 异步保存对话
         tavo_dialogue = final_state.get("tavo_dialogue_messages", [])
         round_num = final_state.get("round_num", 0)
@@ -612,6 +678,18 @@ async def world_completion(
     logger.info(
         f"[WorldMode] 收到请求 | 会话: {session_id} | "
         f"卡带: {request.cartridge or '(已加载)'} | 输入: {request.message[:50]}..."
+    )
+
+    # === 维测：创建轮次记录 ===
+    world_start_time = _time.time()
+    turn_record = turn_recorder.start_turn(
+        session_id=session_id,
+        turn_num=0,
+        mode="world",
+        player_input=request.message,
+        backend="",
+        model=request.model,
+        temperature=request.temperature or 0.7,
     )
 
     # ---------- 1. 世界加载 ----------
@@ -717,6 +795,27 @@ async def world_completion(
         }
 
     logger.info(f"[WorldMode] 返回响应 | 会话: {session_id} | 内容: {len(final_content)}字")
+
+    # === 维测：记录 World 模式数据并提交 ===
+    world_mode_data = {
+        "cartridge": world_runtime._cartridge_name if hasattr(world_runtime, '_cartridge_name') else None,
+        "location_id": field.location_id,
+        "present_entities": field.present_entities,
+        "time": field.time,
+        "scheduled_npcs": npc_ids,
+        "mentioned_entity": mentioned_entity,
+        "rule_violated": violated,
+        "rule_reason": rule_reason,
+        "npc_outputs": npc_outputs,
+        "field_slice": field_slice,
+    }
+    turn_recorder.set_world_mode_data(turn_record, world_mode_data)
+    turn_recorder.commit(
+        turn_record,
+        response_content=final_content,
+        latency_ms=(_time.time() - world_start_time) * 1000,
+    )
+
     return response_obj
 
 

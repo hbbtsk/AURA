@@ -10,6 +10,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from app.api import initialize_aura
@@ -42,6 +43,16 @@ app.add_middleware(
     allow_headers=["*", "X-Tavo-Debug"],  # 允许Tavo调试头
 )
 
+# 禁用前端页面缓存（确保 index.html 更新后立即生效）
+@app.middleware("http")
+async def add_cache_control_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/dashboard") or request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # 注册路由
 from app.api import router as aura_router
 app.include_router(aura_router, prefix="/v1")
@@ -49,6 +60,15 @@ app.include_router(aura_router, prefix="/v1")
 # 注册调试路由
 from app.debug.routes import debug_router
 app.include_router(debug_router, prefix="/debug")
+
+# 注册 Dashboard API（前端观测台数据源）
+from app.api import dashboard_router
+app.include_router(dashboard_router, prefix="/api")
+
+# 托管维测前端页面（仅 static/ 目录，避免暴露项目根目录的敏感文件）
+import os
+_static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+app.mount("/dashboard", StaticFiles(directory=_static_dir, html=True), name="dashboard")
 
 # 健康检查端点
 @app.get("/health")
@@ -82,7 +102,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8080,
         reload=False,  # 禁用热重载，避免日志文件写入触发无限 reload
         log_level="info" if settings.debug_mode else "warning"
     )

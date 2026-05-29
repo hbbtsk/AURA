@@ -21,7 +21,7 @@ from app.memory.models import IntentStructure, IntentResult
 
 logger = logging.getLogger("aura.intent_tagger")
 
-# IntentTagger 的 System Prompt（精简版，适配 Kimi k2.6 的 reasoning 特性）
+# IntentTagger 的 System Prompt（精简版，适配轻量高速模型）
 SYSTEM_PROMPT = """你是角色扮演场景中的用户意图分析师。分析用户输入，输出 JSON。
 
 字段：
@@ -47,22 +47,22 @@ class IntentTagger:
         self._llm_config = None
 
     def _get_llm_config(self):
-        """获取轻量 LLM 配置（优先用 Kimi，回退到 DeepSeek）"""
+        """获取轻量 LLM 配置（优先用 DeepSeek flash，回退到 Kimi）"""
         if self._llm_config is not None:
             return self._llm_config
 
-        # 优先用 Kimi（便宜，适合意图分析）
-        kimi_config = get_llm_config("kimi", scene="intent")
-        if kimi_config and kimi_config.api_key:
-            self._llm_config = kimi_config
-            logger.info("[IntentTagger] 使用 Kimi 作为意图分析模型")
-            return self._llm_config
-
-        # 回退到 DeepSeek
+        # 优先用 DeepSeek flash（速度快，适合意图分析）
         ds_config = get_llm_config("deepseek", scene="intent")
         if ds_config and ds_config.api_key:
             self._llm_config = ds_config
-            logger.info("[IntentTagger] 使用 DeepSeek 作为意图分析模型（回退）")
+            logger.info("[IntentTagger] 使用 DeepSeek 作为意图分析模型")
+            return self._llm_config
+
+        # 回退到 Kimi
+        kimi_config = get_llm_config("kimi", scene="intent")
+        if kimi_config and kimi_config.api_key:
+            self._llm_config = kimi_config
+            logger.info("[IntentTagger] 使用 Kimi 作为意图分析模型（回退）")
             return self._llm_config
 
         logger.warning("[IntentTagger] 无可用 LLM 配置，意图分析将降级")
@@ -78,7 +78,7 @@ class IntentTagger:
 
         Args:
             user_input: 用户输入的原始文本
-            context: 可选上下文信息（场景类型、活跃角色等）
+            context: 可选上下文信息（场景类型、活跃角色、近期对话等）
 
         Returns:
             IntentResult: 意图解析结果
@@ -99,12 +99,21 @@ class IntentTagger:
                 f"活跃角色: {', '.join(active_entities) if active_entities else '未知'}\n"
             )
 
+            # 加入最近 5 轮对话历史（让意图分析有上下文）
+            recent_dialogue = context.get("recent_dialogue", [])
+            if recent_dialogue:
+                context_str += "\n【最近对话历史（最多5轮）】\n"
+                for i, msg in enumerate(recent_dialogue[-5:], 1):
+                    role = msg.get("role", "?")
+                    content = msg.get("content", "")[:200]
+                    context_str += f"  [{i}] {role}: {content}\n"
+
         # 构建用户 Prompt
         user_prompt = (
             f"{context_str}"
-            f"【用户输入】\n"
+            f"【当前用户输入】\n"
             f"{user_input}\n\n"
-            f"请分析上述用户输入，输出 JSON。"
+            f"请分析上述用户输入，结合对话上下文，输出 JSON。"
         )
 
         headers = {
@@ -138,7 +147,14 @@ class IntentTagger:
                     return IntentResult.fallback(user_input)
 
                 result = response.json()
-                content = result["choices"][0]["message"]["content"]
+                message = result["choices"][0]["message"]
+                content = message.get("content", "")
+                reasoning = message.get("reasoning_content", "")
+
+                # Kimi k2.6 等 reasoning 模型可能把 JSON 放在 reasoning_content
+                if not content.strip() and reasoning.strip():
+                    logger.info("[IntentTagger] content 为空，尝试从 reasoning_content 提取")
+                    content = reasoning
 
                 # 解析 JSON（处理可能的 markdown 代码块包裹）
                 return self._parse_response(content, user_input)
