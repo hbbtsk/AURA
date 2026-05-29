@@ -1,159 +1,175 @@
 # AURA Roadmap
 
-> This is a **technical evolution plan**, not a product release schedule.  
-> We are building an event-driven narrative engine grounded in narratology.  
-> The roadmap shows how the architecture deepens from "single-character prompt optimization" to "multi-agent persistent world simulation."
+> **Current Phase**: V1.0 RP Engine Core Development
+> **Last Updated**: 2026-05-29
 
 ---
 
-## Phase 0: Architecture Validation (Current)
+## Version Overview
 
-**Status**: In Progress  
-**Goal**: Prove that "deterministic state layer + dual-output architecture" solves problems that pure prompt engineering cannot.
-
-| Module | Deliverable | State |
-|--------|-------------|-------|
-| Event Patch Data Model | EventPatch schema, causality fields, visibility rules, negative event definition | Validated |
-| 8-Layer Character Model | Physique/Voice/Roots/Network/Core/Tension/Trajectory/Hooks definition | Validated |
-| Dual-Output Architecture | `narrative` + `structured` single-call output schema | Defined |
-| Prompt Compiler Skeleton | LangGraph 15-node workflow, TAVO API compatibility | v0.8 Runnable |
-| 3-Layer Memory | WORKING + RECENT + LONG_TERM RAG | Basic |
-| Narrative Theory Foundation | Bremond sequences, Todorov equilibrium, Trabasso causal test | Defined |
-
-**Milestone for Phase 0 Complete**:  
-A single-character RP session through AURA shows measurable consistency improvement over raw ST (same card, same model, 20+ turns) in a controlled test.
+| Version | Focus | Target Date | Status |
+|---------|-------|-------------|--------|
+| V0.9.x | Prompt compiler skeleton | Completed | Skeleton runnable |
+| **V1.0.x** | **RP Engine Core** | **2026 Q3** | **In development** |
+| V1.1.x | Knowledge Graph (Neo4j) | 2026 Q4 | Architecture validated |
+| V1.2.x | Novel Mode | 2027 Q1 | Defined |
+| V1.3.x | Multi-Agent Concurrency | 2027 Q2 | Planned |
+| V1.4.x | Event Emergence Engine | 2027 H2 | Long-term |
 
 ---
 
-## Phase 1: Quality Guard Layer (v1.0.x)
+## V1.0.x — RP Engine Core (Current)
 
-**Status**: Next  
-**Goal**: Make Mode A (Prompt Compiler) production-usable for solo RP.
+**Goal**: A working RP engine where characters stay in-character for 50+ turns, fully observable via dashboard
 
-**Key Architectural Decision**: Quality guards are **post-output and non-blocking**. The dual-output architecture produces both narrative and structured data in a single LLM call. Guards inspect the output after the fact; they never block the SSE stream. Issues are recorded into state and corrected in the next round's prompt — not by retrying the current LLM call.
+### V1.0.0 Must-Have
 
-| Feature | Technical Approach | Why It Matters |
-|---------|-------------------|----------------|
-| Overreach Detection | Lightweight regex on `narrative.content` during SSE streaming (<1ms) | Prevents model from writing user lines; only zero-tolerance check on hot path |
-| Style Pollution Filter | Voice-layer fingerprint matching against baseline (async) | Catches model drift back to training-data prose; feeds state for next-round correction |
-| Length Guard | Hard min/max tokens + template fallback (async) | Stops model from rambling or giving one-word replies |
-| Intent Tagger v2 | Extracted from `structured.intent_tags` in dual-output | LLM self-annotates intent; replaces heuristic intent parsing |
-| ST Card Importer | PNG metadata parser → 8-layer JSON population | Bridges existing ST ecosystem to AURA state model |
-| Non-Blocking Quality Pipeline | All guards except overreach run async via Event Bus | Eliminates feedback-loop latency that causes user-perceived "freezing" |
+- [ ] **8-Layer State Machine**
+  - [ ] Character card import (SillyTavern PNG format)
+  - [ ] 8-layer schema definition + Pydantic models
+  - [ ] Numeric-to-adjective mapping (trust 0.62 → "basic trust")
+  - [ ] Inter-layer dependency rules (trust change triggers emotion change)
 
-**Milestone**: User can import a ST card, run a 30-turn session, and observe fewer OOC incidents than native ST with the same backend model. Session does not "freeze" at any point due to quality checking.
+- [ ] **Dual-Output Constraint**
+  - [ ] System Prompt enforces narrative + structured format
+  - [ ] structured layer world_delta parsing + execution
+  - [ ] Completeness check (missing structured → warning flag)
 
----
+- [ ] **Director Agent (Simplified)**
+  - [ ] Intent recognition (fast model call)
+  - [ ] Character scheduling (who should speak)
+  - [ ] Director instruction generation
 
-## Phase 2: World Platform Foundation (v1.1.x)
+- [ ] **Observability Dashboard**
+  - [ ] Real-time panel (triad: Character + Event + World)
+  - [ ] Engine panel (LLM call chain: Memory→Compress→Intent→Prompt)
+  - [ ] Character switcher + relation matrix display
+  - [ ] Historical turn replay
 
-**Status**: Architecture validated, code pending  
-**Goal**: Move from "one character + user" to "multiple characters + world rules."
+- [ ] **Infrastructure**
+  - [ ] FastAPI route layer
+  - [ ] SQLite schema (characters, events, world state, turns)
+  - [ ] @snapshot decorator (intermediate process capture)
 
-| Component | Responsibility |
-|-----------|--------------|
-| Director | Field snapshot rendering, mention resolution, NPC scheduling, conflict arbitration, sequence progression |
-| NPC Agent | Per-character System Prompt + single LLM call → dual-output, memory-filtered field slice |
-| World State Manager | Atomic EventPatch application, checkpoint save/load, physical rule enforcement, `world_delta` validation |
-| Cartridge Loader | YAML → Pydantic parser, consistency validation, multi-language alias support |
-| Sequence Layer | PresetSequence (galgame) + DynamicSequence (open world) management |
+### V1.0.1 Polish
 
-**Key Technical Challenge**:  
-Concurrent NPC LLM calls (2-3 characters responding to the same event) without exponential token cost. Solution: shared context retrieval + per-agent prompt slicing + dual-output structured data for Director arbitration.
-
-**Key Architectural Decision — Visibility**:  
-Each NPC maintains an independent visibility map of every event. The same EventPatch carries different `character_delta` and `visibility` per NPC. "What Pyrrha knows" and "What Weiss knows" are computed independently by the Director.
-
-**Milestone**: A 3-character scene (player + 2 NPCs) runs for 10 turns without crosstalk, with NPCs referencing each other's prior statements correctly. Preset sequences can progress based on state conditions.
-
----
-
-## Phase 3: Causal Engine (v1.2.x)
-
-**Status**: Defined  
-**Goal**: Make long-arc narrative coherent across sessions.
-
-| Feature | Approach |
-|---------|----------|
-| Causal Graph Storage | Kuzu graph database for `triggered_by` / `causes` links |
-| Causal Test (Trabasso) | "If not A then not B" — automated causal link validation |
-| Sequence Structure | Bremond's elementary sequences + composite connections (enchainment/enclave/two-sided) |
-| CausalRAG | Retrieve not just "similar events" but "causally related events" — causal chain first, embedding similarity second |
-| Root Cause Tracking | Every event knows its ultimate origin; prevents plot regression |
-| Session Checkpoint | Save world state + event graph + sequence progress; resume exactly where left off |
-
-**Milestone**: A mystery plotline spanning 5 sessions (50+ turns total) maintains clue consistency; red herrings don't accidentally become true, true clues don't disappear. Flashback sequences (enclave) correctly integrate with main timeline.
+- [ ] Voice few-shot injection (character language style lock)
+- [ ] Relation matrix character switch sync
+- [ ] Quality guard layer (usurpation detection, style filter)
+- [ ] ST card importer refinement (handle more fields)
 
 ---
 
-## Phase 4: Event Emergence (v1.3.x)
+## V1.1.x — Knowledge Graph (Neo4j)
 
-**Status**: Planned  
-**Goal**: The world generates events without direct player input.
+**Goal**: Relation matrix → relation reasoning network; causal chain → causal network
 
-| Engine | Function |
-|--------|----------|
-| EventEngine | NPCs schedule off-screen actions based on goals and state; DynamicSequence generation |
-| PacingEngine | Monitors narrative tension via sequence structure; injects lulls or escalations |
-| PerturbationEngine | Random world events (weather, news, accidents) that force character reactions; validated by World State Manager before application |
+- [ ] **Neo4j Deployment**
+  - [ ] Docker local deployment
+  - [ ] Python neo4j driver integration
+  - [ ] Dual-write strategy (SQLite backup + Neo4j query)
 
-**Milestone**: Player logs in after 24h real time; 2-3 "off-screen events" have occurred, changing NPC emotional states and available conversation topics. Events are causally linked to prior player actions (Trabasso test passes).
+- [ ] **Graph Data Model**
+  - [ ] Character nodes (8-layer summaries)
+  - [ ] Event nodes (with world_impact)
+  - [ ] WorldEntity nodes (scenes/items/factions)
+  - [ ] RELATES_TO relationships (directed + historical evolution)
+  - [ ] CAUSED / CONTRIBUTED_TO relationships (strong/weak causality)
+  - [ ] INVOLVES / AFFECTS relationships
 
----
+- [ ] **Graph Query APIs**
+  - [ ] Indirect relation query (how A and B connect through intermediaries)
+  - [ ] Multi-hop causal backtracking (all indirect causes of an event)
+  - [ ] Relation evolution timeline (A→B trust from turn 1 to turn N)
+  - [ ] Global relation network export (D3.js force-directed graph data)
 
-## Phase 5: Multi-Agent Concurrency (v1.4.x)
-
-**Status**: Planned  
-**Goal**: Scale to 5+ simultaneous NPCs with meaningful group dynamics.
-
-| Problem | Solution |
-|---------|----------|
-| Exponential LLM cost | Batch context retrieval; shared field snapshot; selective NPC activation; dual-output reduces per-NPC overhead |
-| Conflict detection | When two NPCs propose contradictory `world_delta`, Director arbitrates by priority + timestamp + narrative function |
-| Offline simulation | NPCs continue "living" in background threads via EventEngine, generating events while player is away |
-| Two-sided sequences | Same event carries different meaning per character; Director computes independent impacts |
-
-**Milestone**: A tavern scene with 5 NPCs + player; NPCs have sidebar conversations, eavesdrop, interrupt, or ignore player based on attention filters. Visibility rules ensure each NPC only knows what they should know.
+- [ ] **Dashboard Frontend Upgrade**
+  - [ ] Relation path exploration panel
+  - [ ] Force-directed graph visualization
 
 ---
 
-## Narrative Theory Integration Timeline
+## V1.2.x — Novel Mode
 
-Narratology is not a "feature" to be added later. It is the **foundation** that evolves with each phase:
+**Goal**: Extend from RP engine to general narrative AI tool
 
-| Phase | Narrative Theory Integration |
-|-------|------------------------------|
-| v0.9.x | Event negative definition (Agent + Action + Impact); non-event filtering |
-| v1.0.x | Intent tagging as narrative function labeling; voice-layer as Barthes's "voice" |
-| v1.1.x | Sequence layer: elementary sequences (Bremond); preset vs dynamic |
-| v1.2.x | Full causal graph: Trabasso test, composite connections, CausalRAG |
-| v1.3.x | Emergent narrative: Todorov equilibrium model for world-state pacing |
-| v1.4.x | Multi-agent: two-sided sequences, per-character visibility as narrative focalization |
+- [ ] **Outline Agent**
+  - [ ] Three-act structure auto-generation
+  - [ ] Chapter beat planning
+  - [ ] Author manual editing of outlines
+
+- [ ] **Narrative Agent**
+  - [ ] Narrative text generation following outline (third-person)
+  - [ ] Character consistency across long form (500k+ words)
+  - [ ] Mixed output: scene description + psychology + dialogue
+
+- [ ] **Foreshadowing Tracker**
+  - [ ] Auto-tag unredeemed foreshadowing
+  - [ ] Foreshadowing redemption alert (warn if N chapters unmentioned)
+  - [ ] Author manual foreshadowing management
+
+- [ ] **Author Style Mimicry**
+  - [ ] Style fingerprint extraction from 3-5 sample chapters
+  - [ ] Sentence preference, rhetorical habits, narrative distance
+  - [ ] Style consistency check
+
+---
+
+## V1.3.x — Multi-Agent Concurrency
+
+**Goal**: Physically eliminate attention dilution, 5+ NPCs online simultaneously
+
+- [ ] **Director Agent (Full Version)**
+  - [ ] Focus scheduling (who speaks, who stays silent)
+  - [ ] Inter-NPC information transfer (visibility rules)
+  - [ ] Conflict detection and arbitration
+
+- [ ] **Multi-Character Agent Parallelism**
+  - [ ] Independent LLM call per NPC
+  - [ ] Prompt length control (single Agent < 2.5k tokens)
+  - [ ] Output merge logic
+
+- [ ] **RAG Memory Retrieval**
+  - [ ] Semantic retrieval (vector similarity)
+  - [ ] Logical retrieval (graph association)
+  - [ ] Hybrid ranking
+
+---
+
+## V1.4.x — Event Emergence Engine (Long-term)
+
+- [ ] EventEngine: Auto-generate emergent events consistent with character state
+- [ ] PacingEngine: Rhythm control (tension and release)
+- [ ] PerturbationEngine: External perturbation injection (sudden events)
+
+---
+
+## Current Tasks (V1.0.0 In Development)
+
+See GitHub Issues. Current priorities:
+
+1. **Observability dashboard frontend** (aura_obs_demo/index.html glue code)
+2. **@snapshot decorator** (LLM call intermediate process capture)
+3. **8-layer state machine data model** (SQLite schema + adjective mapping)
+4. **Director Agent prompt template** (intent recognition + scheduling instructions)
 
 ---
 
 ## How to Contribute
 
-**Phase 0-1** (Immediate needs):
-- Quality guard implementation (Python, regex, JSON Schema)
-- ST card importer (PNG metadata parsing, 8-layer YAML generation)
-- Benchmark suite: define "OOC score" and measure AURA vs baseline
-
-**Phase 2+** (Architecture-heavy):
-- Director scheduling algorithm design
-- Kuzu graph schema for causal storage
-- Event emergence rule system
-- Narrative theory → code mapping validation
-
-See open Issues for tagged tasks: `good first issue`, `help wanted`, `architecture discussion`.
+- **RP Players**: Try V1.0, report OOC scenarios, provide test cases
+- **Novel Authors**: Follow V1.2 novel mode, share long-form creation pain points
+- **Developers**: GitHub PRs. Currently most needed: quality guard layer, ST card importer
 
 ---
 
-## Design Principles Driving the Roadmap
+## Design Document Index
 
-1. **State before text**: Physical/psychological state changes are computed by rules; LLM only handles the cognitive/expressive layer.
-2. **Causality before similarity**: RAG retrieves by causal chain first, embedding similarity second.
-3. **No LLM retry**: Output guards filter or truncate, never ask LLM to regenerate. Issues are corrected in the next round's prompt via state.
-4. **Player brings keys**: We don't host models; we host architecture.
-5. **Text is root**: All narrative logic is inspectable, diffable, and version-controllable.
-6. **Narrative theory drives engineering**: Every technical decision is traceable to a narratological concept.
+| Document | Content |
+|----------|---------|
+| [AURA_evaluation.agent.final.md](AURA_evaluation.agent.final.md) | Comprehensive project evaluation report |
+| [AURA_维测架构_v2.md](AURA_维测架构_v2.md) | Observability architecture design (automated review) |
+| [AURA_Neo4j_知识图谱数据模型.md](AURA_Neo4j_知识图谱数据模型.md) | Neo4j graph data model + Cypher queries |
+| [AURA_项目价值重估_9成效果.md](AURA_项目价值重估_9成效果.md) | Project value reassessment at 90% implementation |
+| [aura_obs_demo/index.html](aura_obs_demo/index.html) | Observability dashboard frontend demo |
+| [aura_obs_demo/AURA维测前端开发文档.md](aura_obs_demo/AURA维测前端开发文档.md) | Frontend development integration document |
