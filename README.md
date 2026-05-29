@@ -93,13 +93,14 @@ AURA's architecture is grounded in **narratology**, not just engineering practic
 | **Mode A: Prompt Compiler** | v0.8 runnable | 15-node LangGraph workflow, TAVO-compatible |
 | **Mode B: World Platform** | Architecture validated | Director + NPC Agent design locked |
 | **Sequence Layer** | Defined | PresetSequence (Galgame) + DynamicSequence (open world) |
-| **Causal Graph Engine** | Defined | Kuzu schema, Trabasso causal tests, concatenation/nesting/two-sided |
+| **Knowledge Graph Engine** | Defined | Neo4j relation network + causal graph (multi-hop reasoning, indirect association) |
 | **Quality Guard Layer** | Planned | Usurpation detection, style filter, length guard (post-output, non-blocking) |
 | **ST Card Importer** | Planned | PNG metadata → 8-layer JSON |
 
 **Target Timeline:**
-- Mode A stable (non-blocking quality guards + causal graph v0.1): 2026 Q3
-- Mode B prototype (3-NPC scene): 2026 Q4
+- V1.0 RP Engine (observability + Director + dual-output): 2026 Q3
+- V1.1 Knowledge Graph (Neo4j relation reasoning network): 2026 Q4
+- V1.2 Novel Mode (outline Agent + foreshadowing tracker): 2027 Q1
 
 ---
 
@@ -254,7 +255,7 @@ The Director automatically activates entities present in the field — no keywor
 | LLM Client | httpx (direct) |
 | Orchestration (Mode A) | LangGraph + LangChain Core |
 | Vector Memory | FAISS + sentence-transformers |
-| Causal Graph | Kuzu (embedded graph database) |
+| Knowledge Graph | Neo4j (relation reasoning + causal network) |
 | Structured Storage | SQLite |
 | Meta Model | Pydantic v2 |
 | Cartridge Format | YAML |
@@ -286,12 +287,12 @@ See [ROADMAP.zh.md](./ROADMAP.zh.md) for details.
 
 | Stage | Focus | Status |
 |-------|-------|--------|
-| **v0.9.x** | Prompt compiler: dual-output architecture, non-blocking quality guards, ST compatible | Skeleton runnable |
-| **v1.0.x** | Quality guards: usurpation detection, style filtering, length control | In development |
-| **v1.1.x** | World platform: meta model, Cartridge system, Director, NPC Agent | Architecture validated, code pending |
-| **v1.2.x** | Causal engine: Kuzu graph database, causal chain traversal, CausalRAG | Defined |
-| **v1.3.x** | Event emergence: EventEngine, PacingEngine, PerturbationEngine | Planned |
-| **v1.4.x** | Multi-Agent concurrency: parallel NPC LLM calls, conflict detection | Planned |
+| **v0.9.x** | Prompt compiler skeleton: dual-output architecture, LangGraph workflow | Skeleton runnable |
+| **v1.0.x** | RP engine core: 8-layer state machine, observability dashboard, Director Agent, dual-output constraint | In development |
+| **v1.1.x** | Knowledge graph: Neo4j relation reasoning network, causal network, indirect association queries | Architecture validated, code pending |
+| **v1.2.x** | Novel mode: outline Agent, narrative Agent, foreshadowing tracker, author style mimicry | Defined |
+| **v1.3.x** | Multi-Agent concurrency: parallel NPC LLM calls, physical elimination of attention dilution | Planned |
+| **v1.4.x** | Event emergence: EventEngine, PacingEngine, PerturbationEngine | Planned |
 
 ---
 

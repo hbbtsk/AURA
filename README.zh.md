@@ -93,13 +93,14 @@ AURA 的架构根植于**叙事学**，而非仅工程实践：
 | **Mode A：Prompt 编译器** | v0.8 可运行 | 15节点 LangGraph 工作流，兼容 TAVO |
 | **Mode B：世界平台** | 架构已验证 | Director + NPC Agent 设计已锁定 |
 | **序列层** | 已定义 | PresetSequence（Galgame）+ DynamicSequence（开放世界） |
-| **因果图引擎** | 已定义 | Kuzu schema、Trabasso 因果测试、连接/镶嵌/两面式 |
+| **知识图谱引擎** | 已定义 | Neo4j 关系网络 + 因果图（多跳推理、间接关联）|
 | **质量守卫层** | 计划中 | 越权检测、风格过滤器、长度守卫（输出后处理，非阻塞） |
 | **ST 卡导入器** | 计划中 | PNG 元数据 → 8层 JSON |
 
 **目标时间线：**
-- Mode A 稳定（非阻塞质量守卫 + 因果图 v0.1）：2026 Q3
-- Mode B 原型（3-NPC 场景）：2026 Q4
+- V1.0 RP 引擎（维测 + Director + 双层输出）：2026 Q3
+- V1.1 知识图谱（Neo4j 关系推理网）：2026 Q4
+- V1.2 小说模式（大纲 Agent + 伏笔追踪）：2027 Q1
 
 ---
 
@@ -254,7 +255,7 @@ Director 自动激活在场域中的实体 —— 无需关键词匹配。序列
 | LLM 客户端 | httpx (直连) |
 | 编排（Mode A） | LangGraph + LangChain Core |
 | 向量记忆 | FAISS + sentence-transformers |
-| 因果图 | Kuzu（嵌入式图数据库）|
+| 知识图谱 | Neo4j（关系推理 + 因果网络）|
 | 结构化存储 | SQLite |
 | 元模型 | Pydantic v2 |
 | Cartridge 格式 | YAML |
@@ -286,12 +287,12 @@ python -m app.main
 
 | 阶段 | 焦点 | 状态 |
 |------|------|------|
-| **v0.9.x** | Prompt 编译器：双输出架构、非阻塞质量守卫、兼容 ST | 骨架可运行 |
-| **v1.0.x** | 质量守卫：越权检测、风格过滤、长度控制 | 开发中 |
-| **v1.1.x** | 世界平台：元模型、Cartridge 系统、Director、NPC Agent | 架构已验证，代码待写 |
-| **v1.2.x** | 因果引擎：Kuzu 图数据库、因果链遍历、CausalRAG | 已定义 |
-| **v1.3.x** | 事件涌现：EventEngine、PacingEngine、PerturbationEngine | 计划中 |
-| **v1.4.x** | 多 Agent 并发：并行 NPC LLM 调用、冲突检测 | 计划中 |
+| **v0.9.x** | Prompt 编译器骨架：双输出架构、LangGraph 工作流 | 骨架可运行 |
+| **v1.0.x** | RP 引擎核心：8层状态机、维测观测台、Director Agent、双层输出约束 | 开发中 |
+| **v1.1.x** | 知识图谱：Neo4j 关系推理网、因果网络、间接关联查询 | 架构已验证，代码待写 |
+| **v1.2.x** | 小说模式：大纲 Agent、叙事 Agent、伏笔追踪、作者风格模仿 | 已定义 |
+| **v1.3.x** | 多 Agent 并发：并行 NPC LLM 调用、注意力稀释物理消除 | 计划中 |
+| **v1.4.x** | 事件涌现：EventEngine、PacingEngine、PerturbationEngine | 计划中 |
 
 ---
 
