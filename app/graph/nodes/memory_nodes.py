@@ -56,10 +56,10 @@ async def memory_retrieve_node(state: "AgentState") -> "AgentState":
                 top_k=10,
                 query_structure=intent_result.structure,
             )
-            summary = f"结构化召回: {len(rag_memories)}条, query={query_text[:30]}..."
+            summary = f"结构化召回: {len(rag_memories)}条, query={query_text}"
         else:
             rag_memories = await memory_manager.search(query_text, top_k=10)
-            summary = f"传统召回: {len(rag_memories)}条, query={query_text[:30]}..."
+            summary = f"传统召回: {len(rag_memories)}条, query={query_text}"
     except Exception as e:
         logger.warning(f"[MemoryRetrieve] RAG 失败: {e}")
         rag_memories = []

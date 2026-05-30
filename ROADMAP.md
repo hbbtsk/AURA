@@ -40,16 +40,16 @@
   - [ ] Character scheduling (who should speak)
   - [ ] Director instruction generation
 
-- [ ] **Observability Dashboard**
-  - [ ] Real-time panel (triad: Character + Event + World)
-  - [ ] Engine panel (LLM call chain: Memory→Compress→Intent→Prompt)
-  - [ ] Character switcher + relation matrix display
-  - [ ] Historical turn replay
+- [x] **Observability Dashboard**
+  - [x] Real-time panel (triad: Character + Event + World)
+  - [x] Engine panel (LLM call chain: Memory→Compress→Intent→Prompt)
+  - [x] Character switcher + relation matrix display
+  - [x] Historical turn replay (per-chat multi-turn)
 
-- [ ] **Infrastructure**
-  - [ ] FastAPI route layer
-  - [ ] SQLite schema (characters, events, world state, turns)
-  - [ ] @snapshot decorator (intermediate process capture)
+- [x] **Infrastructure**
+  - [x] FastAPI route layer
+  - [x] SQLite schema (chats, turn_records, characters, events, world state)
+  - [x] @snapshot decorator (intermediate process capture)
 
 ### V1.0.1 Polish
 

@@ -79,7 +79,7 @@ class FAISSStore:
             self.documents.append(text)
             self.metadatas.append(meta)
             await self._save()
-            logger.info(f"[AURA→记忆] 新增记忆(seq={meta['insert_seq']}): {text[:80]}...")
+            logger.info(f"[AURA→记忆] 新增记忆(seq={meta['insert_seq']}): {text}")
         except Exception as e:
             logger.error(f"[AURA→记忆] 新增记忆失败: {e}")
 
@@ -167,12 +167,12 @@ class FAISSStore:
                         f"  [{score:.3f}] sem={sem:.3f} struct={struct:.3f} time={t:.3f} | {doc_preview}"
                     )
                 logger.debug(
-                    f"[AURA→RAG] 结构化检索 \"{query[:40]}...\"\n"
+                    f"[AURA→RAG] 结构化检索 \"{query}\"\n"
                     + "\n".join(top_detail)
                 )
 
             logger.info(
-                f"[AURA→RAG] 检索 \"{query[:40]}...\" → "
+                f"[AURA→RAG] 检索 \"{query}\" → "
                 f"召回 {len(top_results)} 条 (共 {len(self.documents)} 条, "
                 f"query_struct={'有' if query_structure and not query_structure.is_empty() else '无'})"
             )

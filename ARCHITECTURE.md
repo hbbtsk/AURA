@@ -333,4 +333,5 @@ AURA/
 | v0.7.0 | 2026-05-10 | 3-layer memory + IntentTagger + intent-aware RAG v2 |
 | v0.8.0 | 2026-05-11 | LangGraph 14-node state machine |
 | v0.8.3 | 2026-05-17 | Module reorganization + file splitting |
-| **v1.0.0** | **2026-05-25** | **Route B: Meta-models, cartridge system, Director, NPC Agent, LLM failover** |
+| v1.0.0 | 2026-05-25 | Route B: Meta-models, cartridge system, Director, NPC Agent, LLM failover |
+| **v1.1.0** | **2026-05-30** | **Multi-turn chat persistence: `chats` table, per-chat turn increment, context restoration, dashboard chat/turn selectors, raw prompt blocks with token counts, log persistence + SSE streaming** |

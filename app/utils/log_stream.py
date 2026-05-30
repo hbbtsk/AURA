@@ -94,6 +94,113 @@ log_ring = LogRingBuffer(maxlen=2000)
 
 
 # ------------------------------------------------------------------
+# 从日志文件加载历史日志（服务器重启后恢复）
+# ------------------------------------------------------------------
+
+def load_logs_from_file(log_path: str, limit: int = 500) -> int:
+    """
+    从文本日志文件加载最近 N 条历史记录到 LogRingBuffer。
+
+    解析格式: 2026-05-03 15:27:53,437 - aura-completions - DEBUG - message
+    支持多行消息（traceback 等）。
+
+    返回成功加载的条数。
+    """
+    import os
+    import re
+    from datetime import datetime
+
+    if not os.path.exists(log_path):
+        return 0
+
+    # 正则: 时间 - logger名 - 级别 - 消息
+    log_re = re.compile(
+        r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - (.+?) - (DEBUG|INFO|WARNING|ERROR) - (.*)$"
+    )
+
+    entries: List[LogEntry] = []
+    current_entry: Optional[LogEntry] = None
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            for raw_line in f:
+                line = raw_line.rstrip("\n\r")
+                m = log_re.match(line)
+                if m:
+                    # 保存上一条
+                    if current_entry is not None:
+                        entries.append(current_entry)
+
+                    ts_str, logger_name, level_name, msg = m.groups()
+                    try:
+                        dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S,%f")
+                        timestamp = dt.timestamp()
+                        time_str = dt.strftime("%H:%M:%S") + ".{:03d}".format(dt.microsecond // 1000)
+                    except ValueError:
+                        timestamp = time.time()
+                        time_str = ts_str
+
+                    # 节点映射
+                    node = "system"
+                    for prefix, ntype in LogStreamHandler.NODE_MAP.items():
+                        if prefix in logger_name.lower():
+                            node = ntype
+                            break
+
+                    # 状态
+                    status = "error" if level_name == "ERROR" else "warn" if level_name == "WARNING" else "ok"
+
+                    # 耗时提取
+                    duration_ms = 0
+                    for keyword in ["耗时", "elapsed", "latency", "ms"]:
+                        if keyword in msg:
+                            nums = re.findall(r"(\d+\.?\d*)\s*ms", msg)
+                            if nums:
+                                try:
+                                    duration_ms = int(float(nums[-1]))
+                                except ValueError:
+                                    pass
+                            break
+
+                    current_entry = LogEntry(
+                        timestamp=timestamp,
+                        time_str=time_str,
+                        node=node,
+                        node_name=logger_name,
+                        level=level_name,
+                        action=msg[:200],
+                        detail="",
+                        duration_ms=duration_ms,
+                        status=status,
+                        full_action=msg,
+                    )
+                else:
+                    # 多行消息的续行
+                    if current_entry is not None:
+                        current_entry.full_action += "\n" + line
+                        # 如果 action 还没截满，也追加
+                        if len(current_entry.action) < 200:
+                            current_entry.action += "\n" + line[:200 - len(current_entry.action)]
+
+            # 最后一条
+            if current_entry is not None:
+                entries.append(current_entry)
+
+    except Exception as e:
+        logging.getLogger("aura.log_stream").warning(f"[LogStream] 加载历史日志失败: {e}")
+        return 0
+
+    # 只保留最近 limit 条，按时间排序后写入 ring buffer
+    entries = entries[-limit:]
+    for e in entries:
+        log_ring.append(e)
+
+    loaded = len(entries)
+    logging.getLogger("aura.log_stream").info(f"[LogStream] 从历史日志加载 {loaded} 条记录")
+    return loaded
+
+
+# ------------------------------------------------------------------
 # 自定义 Handler：将标准日志转为 LogEntry 写入环形缓冲区
 # ------------------------------------------------------------------
 
@@ -173,7 +280,7 @@ class LogStreamHandler(logging.Handler):
             detail="",          # 详情可后续扩展
             duration_ms=duration_ms,
             status=status,
-            full_action=msg[:2000],  # 保留更长的完整消息用于详情面板
+            full_action=msg,  # 保留完整消息，详情面板展开时显示原始内容
         )
 
 

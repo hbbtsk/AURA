@@ -21,7 +21,7 @@ from app.memory.models import IntentStructure, IntentResult
 
 logger = logging.getLogger("aura.intent_tagger")
 
-# IntentTagger 的 System Prompt（精简版，适配轻量高速模型）
+# IntentTagger 的 System Prompt（精简版，适配轻量高速模型如 DeepSeek v4 flash）
 SYSTEM_PROMPT = """你是角色扮演场景中的用户意图分析师。分析用户输入，输出 JSON。
 
 字段：
@@ -47,8 +47,22 @@ class IntentTagger:
         self._llm_config = None
 
     def _get_llm_config(self):
-        """获取轻量 LLM 配置（优先用 DeepSeek flash，回退到 Kimi）"""
+        """获取轻量 LLM 配置（优先用 DeepSeek v4 flash，回退到 Kimi）"""
         if self._llm_config is not None:
+            return self._llm_config
+
+        # 优先用 DeepSeek v4 flash（速度快，意图分析足够）
+        ds_config = get_llm_config("deepseek", scene="intent")
+        if ds_config and ds_config.api_key:
+            self._llm_config = ds_config
+            logger.info("[IntentTagger] 使用 DeepSeek 作为意图分析模型")
+            return self._llm_config
+
+        # 回退到 Kimi
+        kimi_config = get_llm_config("kimi", scene="intent")
+        if kimi_config and kimi_config.api_key:
+            self._llm_config = kimi_config
+            logger.info("[IntentTagger] 使用 Kimi 作为意图分析模型（回退）")
             return self._llm_config
 
         # 优先用 DeepSeek flash（速度快，适合意图分析）

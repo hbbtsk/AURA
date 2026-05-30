@@ -30,6 +30,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.7
     stream: Optional[bool] = False
     max_tokens: Optional[int] = None
+    chat_id: Optional[str] = None  # TAVO 传来的稳定 chat ID，继续同一剧情
 
 
 class ChatMessageResponse(BaseModel):

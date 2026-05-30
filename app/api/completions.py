@@ -307,12 +307,13 @@ async def _stream_llm_direct(
         fallback_triggered = False
         fallback_reason = ""
         full_content_parts = []  # 收集完整内容用于保存
+        usage_info = {}  # 收集流式响应中的 usage（部分 API 在最后 chunk 返回）
 
         # 第一轮：主模型
         try:
             async for chunk in _try_stream_llm(backend, model_name, ttfb_timeout=settings.llm_main_ttfb_timeout):
                 yield chunk
-                # 从 chunk 中提取 content 用于保存
+                # 从 chunk 中提取 content 和 usage 用于保存
                 try:
                     line = chunk.decode("utf-8", errors="replace").strip()
                     if line.startswith("data: ") and line != "data: [DONE]":
@@ -321,6 +322,9 @@ async def _stream_llm_direct(
                         content = delta.get("content", "")
                         if content:
                             full_content_parts.append(content)
+                        # 收集 usage（部分流式 API 在最后 chunk 返回）
+                        if "usage" in data:
+                            usage_info = data["usage"]
                 except (json.JSONDecodeError, IndexError, KeyError):
                     pass
             logger.info(f"[AURA→TAVO] 流式返回完成 | 会话: {session_id} | 后端: {backend}")
@@ -345,7 +349,7 @@ async def _stream_llm_direct(
             try:
                 async for chunk in _try_stream_llm(fallback_backend, None):
                     yield chunk
-                    # 从 chunk 中提取 content 用于保存
+                    # 从 chunk 中提取 content 和 usage 用于保存
                     try:
                         line = chunk.decode("utf-8", errors="replace").strip()
                         if line.startswith("data: ") and line != "data: [DONE]":
@@ -354,6 +358,8 @@ async def _stream_llm_direct(
                             content = delta.get("content", "")
                             if content:
                                 full_content_parts.append(content)
+                            if "usage" in data:
+                                usage_info = data["usage"]
                     except (json.JSONDecodeError, IndexError, KeyError):
                         pass
                 logger.info(
@@ -398,7 +404,7 @@ async def _stream_llm_direct(
                 turn_record,
                 content=assistant_content,
                 reasoning_content="",
-                raw_response=None,
+                raw_response={"usage": usage_info} if usage_info else None,
                 actual_backend=actual_backend,
                 fallback_triggered=fallback_triggered,
                 fallback_reason=fallback_reason,
@@ -465,10 +471,27 @@ async def chat_completion(
     3. 直接调用 LLM API（流式/非流式）
     4. 异步保存对话到记忆
     """
+    # === Chat / Session 管理 ===
+    chat_id = request.chat_id
+    if not chat_id:
+        # TAVO 没传 chat_id：生成一个新的（开启新剧情）
+        chat_id = f"chat_{int(_time.time())}_{id(request)}"
+        logger.info(f"[Chat] 未收到 chat_id，生成新 chat: {chat_id}")
+    else:
+        logger.info(f"[Chat] 继续已有 chat: {chat_id}")
+
+    # 确保 chat 记录在数据库中存在
+    turn_recorder.ensure_chat(chat_id=chat_id)
+
+    # 同一 chat 的 turn_num 递增
+    turn_num = turn_recorder.get_next_turn_num(chat_id)
+    logger.info(f"[Chat] chat={chat_id} | turn_num={turn_num}")
+
+    # 生成 session_id（每次请求唯一，用于单次请求追踪）
     session_id = f"aura_{int(_time.time())}_{id(request)}"
 
     logger.info(
-        f"[TAVO→AURA] 收到请求 | 会话: {session_id} | "
+        f"[TAVO→AURA] 收到请求 | chat={chat_id} | turn={turn_num} | session: {session_id} | "
         f"模型: {request.model} | 流式: {request.stream} | 消息数: {len(request.messages)}"
     )
 
@@ -493,7 +516,8 @@ async def chat_completion(
     # === 维测：创建轮次记录 ===
     turn_record = turn_recorder.start_turn(
         session_id=session_id,
-        turn_num=0,  # 将在 LangGraph 后更新
+        turn_num=turn_num,
+        chat_id=chat_id,
         mode="chat",
         player_input=user_content,
         backend=backend,
@@ -501,13 +525,40 @@ async def chat_completion(
         temperature=request.temperature or 0.7,
     )
 
+    # === 上下文恢复：旧卡重新玩时注入历史对话 ===
+    messages_for_compile: List[Dict[str, Any]] = [msg.model_dump() for msg in request.messages]
+    if turn_num > 0:
+        history = turn_recorder.get_chat_messages(chat_id, limit=50)
+        if history:
+            # 找到 system 消息位置，将历史插入到 system 之后、当前 user 之前
+            system_idx = -1
+            current_user_idx = -1
+            for i, m in enumerate(messages_for_compile):
+                if m.get("role") == "system" and system_idx == -1:
+                    system_idx = i
+                elif m.get("role") == "user" and current_user_idx == -1:
+                    current_user_idx = i
+            # 如果找到当前 user 消息位置，在其前面插入历史
+            if current_user_idx != -1:
+                insert_pos = current_user_idx
+                # 去重：如果历史最后一条和当前消息相同则跳过
+                if history and history[-1].get("content") == messages_for_compile[current_user_idx].get("content"):
+                    history = history[:-1]
+                for h in history:
+                    messages_for_compile.insert(insert_pos, h)
+                    insert_pos += 1
+                logger.info(
+                    f"[Chat] 恢复上下文 | chat={chat_id} | 注入 {len(history)} 条历史消息 | "
+                    f"当前消息数: {len(messages_for_compile)}"
+                )
+
     # ============================================================
     # 2. LangGraph 工作流：Prompt 编译
     # ============================================================
     initial_state = {
         "request": {
             "model": request.model,
-            "messages": [msg.model_dump() for msg in request.messages],
+            "messages": messages_for_compile,
             "temperature": request.temperature,
             "stream": False,
             "max_tokens": request.max_tokens,
@@ -520,7 +571,7 @@ async def chat_completion(
         "max_tokens": request.max_tokens,
         "x_tavo_debug": x_tavo_debug,
         "user_content": user_content,
-        "round_num": 0,
+        "round_num": turn_num,
         "node_logs": [],
         "start_time": _time.time(),
     }
@@ -551,7 +602,7 @@ async def chat_completion(
         logger.info(f"  → {log['node']}: {log['elapsed_ms']}ms | {log.get('summary', '')}")
 
     # === 维测：记录 Prompt 编译产物 ===
-    turn_record.turn_num = final_state.get("round_num", 0)
+    # turn_num 已在请求入口处从数据库递增计算，不再覆盖
     turn_recorder.set_prompt_compiled(turn_record, final_state)
     turn_recorder.set_quality_check(turn_record, final_state)
 
@@ -677,7 +728,7 @@ async def world_completion(
     session_id = f"aura_world_{int(_time.time())}_{id(request)}"
     logger.info(
         f"[WorldMode] 收到请求 | 会话: {session_id} | "
-        f"卡带: {request.cartridge or '(已加载)'} | 输入: {request.message[:50]}..."
+        f"卡带: {request.cartridge or '(已加载)'} | 输入: {request.message}"
     )
 
     # === 维测：创建轮次记录 ===

@@ -95,9 +95,13 @@ def setup_logging(
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     # 注册实时日志流 Handler（内存缓冲区，供 SSE 推送）
-    from app.utils.log_stream import LogStreamHandler
+    from app.utils.log_stream import LogStreamHandler, load_logs_from_file
     _stream_handler = LogStreamHandler(level=logging.DEBUG)
     logging.getLogger().addHandler(_stream_handler)
+
+    # 从历史日志文件加载最近记录到内存缓冲区（服务器重启后恢复）
+    log_file_path = os.path.join(_log_dir, log_file)
+    load_logs_from_file(log_file_path, limit=500)
 
     _initialized = True
 

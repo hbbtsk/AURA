@@ -49,7 +49,62 @@ def _sanitize_json_text(val: Any) -> Any:
 
 
 # ------------------------------------------------------------------
-# 会话列表
+# Chat 列表（多轮对话）
+# ------------------------------------------------------------------
+
+@router.get("/chats")
+async def list_chats(
+    limit: int = Query(50, ge=1, le=200),
+) -> Dict[str, Any]:
+    """
+    获取所有 Chat 列表（一个 chat = 用户和某角色卡的一次完整剧情）。
+    """
+    chats = turn_recorder.get_chats(limit=limit)
+    return {
+        "count": len(chats),
+        "chats": [
+            {
+                "chat_id": c["chat_id"],
+                "cartridge_id": c.get("cartridge_id", ""),
+                "created_at": c.get("created_at", 0),
+                "updated_at": c.get("updated_at", 0),
+                "turn_count": c.get("turn_count", 0),
+            }
+            for c in chats
+        ],
+    }
+
+
+@router.get("/chat/{chat_id}/turns")
+async def get_chat_turns(
+    chat_id: str,
+    limit: int = Query(200, ge=1, le=500),
+) -> Dict[str, Any]:
+    """
+    获取某 Chat 下的所有轮次（按 turn_num 升序）。
+    """
+    turns = turn_recorder.get_turns_by_chat(chat_id, limit=limit)
+    return {
+        "chat_id": chat_id,
+        "count": len(turns),
+        "turns": [
+            {
+                "session_id": t.get("session_id", ""),
+                "turn_num": t.get("turn_num", 0),
+                "timestamp": t.get("timestamp", 0),
+                "mode": t.get("mode", "chat"),
+                "player_input": t.get("player_input", ""),
+                "latency_ms": t.get("latency_ms", 0),
+                "backend": t.get("backend", ""),
+                "fallback_triggered": t.get("fallback_triggered", False),
+            }
+            for t in turns
+        ],
+    }
+
+
+# ------------------------------------------------------------------
+# 会话列表（兼容旧接口）
 # ------------------------------------------------------------------
 
 @router.get("/sessions")
@@ -360,15 +415,13 @@ async def get_engine_turn(session_id: str, turn_num: int) -> Dict[str, Any]:
     if not memory_msg and retrieved_memories:
         memory_msg = "\n".join(retrieved_memories[:10])
 
-    # 从 messages_list 提取 recent 对话（system 之前的 user/assistant 历史，最多 10 轮）
+    # 从 messages_list 提取 recent 对话原始内容（完整不截断，调试需要看到真实数据）
     recent_lines = []
     for msg in messages_list:
         if isinstance(msg, dict) and msg.get("role") in ("user", "assistant"):
             role_label = "玩家" if msg["role"] == "user" else "NPC"
-            content = msg.get("content", "")[:300]
-            if len(msg.get("content", "")) > 300:
-                content += "..."
-            recent_lines.append(f"[{role_label}] {content}")
+            # 完整内容，不做任何截断，确保调试面板显示的就是 LLM 实际收到的原始数据
+            recent_lines.append(f"[{role_label}] {msg.get('content', '')}")
     if recent_lines:
         recent_msg = "\n".join(recent_lines[-10:])
 
@@ -380,6 +433,14 @@ async def get_engine_turn(session_id: str, turn_num: int) -> Dict[str, Any]:
         intent_list = raw_input_type
     else:
         intent_list = []
+
+    # token 数：只计算输入（prompt）token，不计算 LLM 返回 token
+    pt = record.get("prompt_tokens", 0)
+    if pt == 0:
+        # 基于字符数粗略估算输入 token（中文约1字符/token，英文约4字符/token）
+        prompt_text = system_msg + memory_msg + recent_msg + user_msg
+        prompt_cn = sum(1 for c in prompt_text if '\u4e00' <= c <= '\u9fff')
+        pt = prompt_cn + max(1, (len(prompt_text) - prompt_cn) // 4)
 
     # 构建引擎面板格式的 5 步链路
     engine_data = {
@@ -408,14 +469,16 @@ async def get_engine_turn(session_id: str, turn_num: int) -> Dict[str, Any]:
         "intent": intent_list,
         "directive": trunc(intent_result.get("implicit_instruction", ""), 1000),
 
-        # Step 4: 最终 Prompt（放宽截断，方便调试查看完整组装）
+        # Step 4: 最终 Prompt（调试面板必须显示原始数据，不做任何截断）
         "prompt": {
-            "system": trunc(system_msg, 50000),
-            "memory": trunc(memory_msg, 10000),
-            "recent": trunc(recent_msg, 10000),
-            "user": trunc(user_msg, 10000),
+            "system": system_msg,
+            "memory": memory_msg,
+            "recent": recent_msg,
+            "user": user_msg,
         },
-        "tokens": record.get("prompt_tokens", 0) + record.get("completion_tokens", 0),
+        "tokens": pt,
+        "prompt_tokens": pt,
+        "completion_tokens": 0,
 
         # 元信息
         "backend": record.get("actual_backend", record.get("backend", "")),
@@ -425,8 +488,8 @@ async def get_engine_turn(session_id: str, turn_num: int) -> Dict[str, Any]:
 
         # 9 区块 Prompt（供前端展开查看）
         "blocks": record.get("blocks", []),
-        "original_system": trunc(record.get("original_system", ""), 50000),
-        "optimized_system": trunc(record.get("optimized_system", ""), 50000),
+        "original_system": record.get("original_system", ""),
+        "optimized_system": record.get("optimized_system", ""),
 
         # 节点执行日志
         "node_logs": node_logs,

@@ -332,4 +332,5 @@ AURA/
 | v0.7.0 | 2026-05-10 | 三层记忆 + IntentTagger + 意图感知 RAG v2 |
 | v0.8.0 | 2026-05-11 | LangGraph 14 节点状态机 |
 | v0.8.3 | 2026-05-17 | 模块重组 + 文件拆分 |
-| **v1.0.0** | **2026-05-25** | **路线 B: 元模型、卡带系统、Director、NPC Agent、LLM 故障转移** |
+| v1.0.0 | 2026-05-25 | 路线 B: 元模型、卡带系统、Director、NPC Agent、LLM 故障转移 |
+| **v1.1.0** | **2026-05-30** | **多轮对话持久化：`chats` 表、按 chat 递增 turn、上下文恢复、Dashboard chat/轮次选择器、原始 Prompt 区块 + token 统计、日志持久化 + SSE 流式** |

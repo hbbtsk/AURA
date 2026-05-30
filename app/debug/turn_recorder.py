@@ -97,6 +97,9 @@ class TurnRecord:
     # === World 模式专用 ===
     world_mode_data_json: str = ""      # Director 决策、NPC 输出、场域切片等
 
+    # === 多轮对话 ===
+    chat_id: str = ""  # 稳定的 chat 标识
+
     # === 内部 ===
     _dirty: bool = field(default=False, repr=False)  # 是否有新数据待写入
 
@@ -142,10 +145,30 @@ class TurnRecorder:
         try:
             cursor = conn.cursor()
 
-            # 主表：轮次全链路记录
+            # Chat 表：一个 chat = 用户和某个角色卡的一次完整剧情
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL UNIQUE,
+                    cartridge_id TEXT,
+                    user_id TEXT,
+                    context_json TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chats_chat_id ON chats(chat_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at)
+            """)
+
+            # 主表：轮次全链路记录（增加 chat_id 列）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS turn_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT,
                     session_id TEXT NOT NULL,
                     turn_num INTEGER NOT NULL,
                     timestamp REAL NOT NULL,
@@ -194,6 +217,13 @@ class TurnRecorder:
                 )
             """)
 
+            # 迁移：旧表没有 chat_id 列则添加
+            cursor.execute("PRAGMA table_info(turn_records)")
+            cols = [c[1] for c in cursor.fetchall()]
+            if 'chat_id' not in cols:
+                cursor.execute("ALTER TABLE turn_records ADD COLUMN chat_id TEXT")
+                logger.info("[Telemetry] turn_records 添加 chat_id 列")
+
             # 索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_turn_session
@@ -207,12 +237,146 @@ class TurnRecorder:
                 CREATE INDEX IF NOT EXISTS idx_turn_session_turn
                 ON turn_records(session_id, turn_num)
             """)
-
-            # 保留旧表 state_snapshots（不删除，兼容已有数据）
-            # 但新数据全部写入 turn_records
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_turn_chat
+                ON turn_records(chat_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_turn_chat_turn
+                ON turn_records(chat_id, turn_num)
+            """)
+            # UNIQUE 约束防止同一 chat 的 turn_num 重复（解决并发 race condition）
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_chat_turn_unique
+                ON turn_records(chat_id, turn_num)
+            """)
 
             conn.commit()
-            logger.info("[Telemetry] turn_records 表初始化完成")
+            logger.info("[Telemetry] chats + turn_records 表初始化完成")
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Chat 管理
+    # ------------------------------------------------------------------
+    def ensure_chat(
+        self,
+        chat_id: str,
+        cartridge_id: Optional[str] = None,
+        context_json: Optional[str] = None,
+    ) -> None:
+        """创建或更新 chat 记录。"""
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            cursor = conn.cursor()
+            now = time.time()
+            cursor.execute(
+                """
+                INSERT INTO chats (chat_id, cartridge_id, context_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    updated_at = excluded.updated_at,
+                    context_json = COALESCE(excluded.context_json, context_json)
+                """,
+                (chat_id, cartridge_id or "", context_json or "", now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_next_turn_num(self, chat_id: str) -> int:
+        """获取同一 chat 的下一个 turn_num（事务保护，防止并发重复）。"""
+        if not chat_id:
+            return 0
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            # BEGIN IMMEDIATE 获取写锁，防止并发请求读到相同的 MAX(turn_num)
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COALESCE(MAX(turn_num), -1) + 1 FROM turn_records WHERE chat_id = ?",
+                (chat_id,),
+            )
+            result = cursor.fetchone()[0] or 0
+            conn.commit()
+            return result
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_chats(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取 chat 列表（最近更新的在前）。"""
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # LEFT JOIN + GROUP BY 避免 correlated subquery 的 N+1 问题
+            cursor.execute(
+                """
+                SELECT c.chat_id, c.cartridge_id, c.created_at, c.updated_at,
+                       COUNT(t.id) as turn_count
+                FROM chats c
+                LEFT JOIN turn_records t ON t.chat_id = c.chat_id
+                GROUP BY c.chat_id
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_turns_by_chat(self, chat_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """获取某 chat 的所有轮次（摘要）。"""
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT session_id, turn_num, timestamp, mode, player_input,
+                       backend, model, latency_ms, fallback_triggered
+                FROM turn_records
+                WHERE chat_id = ?
+                ORDER BY turn_num DESC
+                LIMIT ?
+                """,
+                (chat_id, limit),
+            )
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_chat_messages(self, chat_id: str, limit: int = 50) -> List[Dict[str, str]]:
+        """恢复某 chat 的历史对话消息（用于上下文注入）。"""
+        if not chat_id:
+            return []
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT player_input, response_content
+                FROM turn_records
+                WHERE chat_id = ? AND player_input IS NOT NULL AND response_content IS NOT NULL
+                ORDER BY turn_num ASC
+                LIMIT ?
+                """,
+                (chat_id, limit),
+            )
+            msgs: List[Dict[str, str]] = []
+            for row in cursor.fetchall():
+                if row["player_input"]:
+                    msgs.append({"role": "user", "content": row["player_input"]})
+                if row["response_content"]:
+                    msgs.append({"role": "assistant", "content": row["response_content"]})
+            return msgs
         finally:
             conn.close()
 
@@ -223,6 +387,7 @@ class TurnRecorder:
         self,
         session_id: str,
         turn_num: int,
+        chat_id: Optional[str] = None,
         mode: str = "chat",
         player_input: str = "",
         backend: str = "",
@@ -233,6 +398,7 @@ class TurnRecorder:
         record = TurnRecord(
             session_id=session_id,
             turn_num=turn_num,
+            chat_id=chat_id or "",
             timestamp=time.time(),
             mode=mode,
             player_input=player_input,
@@ -351,7 +517,7 @@ class TurnRecorder:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO turn_records (
-                    session_id, turn_num, timestamp, mode,
+                    chat_id, session_id, turn_num, timestamp, mode,
                     player_input, backend, model, temperature,
                     original_system, decomposed_json, blocks_json,
                     optimized_system, messages_list_json, working_memory_text,
@@ -363,10 +529,10 @@ class TurnRecorder:
                     node_logs_json,
                     response_content, latency_ms, prompt_tokens, completion_tokens,
                     world_mode_data_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    record.session_id, record.turn_num, record.timestamp, record.mode,
+                    record.chat_id, record.session_id, record.turn_num, record.timestamp, record.mode,
                     record.player_input, record.backend, record.model, record.temperature,
                     record.original_system, record.decomposed_json, record.blocks_json,
                     record.optimized_system, record.messages_list_json, record.working_memory_text,

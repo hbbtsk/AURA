@@ -90,7 +90,7 @@ AURA 的架构根植于**叙事学**，而非仅工程实践：
 | **8层角色模型** | 已验证 | 定义锁定，schema 已定 |
 | **事件总线设计** | 已验证 | EventPatch schema、因果字段、可见性规则 |
 | **双输出架构** | 已定义 | `narrative` + `structured` 单次调用输出 |
-| **Mode A：Prompt 编译器** | v0.8 可运行 | 15节点 LangGraph 工作流，兼容 TAVO |
+| **Mode A：Prompt 编译器** | v1.1 可运行 | 多轮对话持久化、上下文恢复、原始 Prompt 可观测 |
 | **Mode B：世界平台** | 架构已验证 | Director + NPC Agent 设计已锁定 |
 | **序列层** | 已定义 | PresetSequence（Galgame）+ DynamicSequence（开放世界） |
 | **知识图谱引擎** | 已定义 | Neo4j 关系网络 + 因果图（多跳推理、间接关联）|

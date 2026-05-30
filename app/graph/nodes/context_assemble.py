@@ -146,10 +146,14 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         # --- [CHARACTER_CARD] ---
         if sys_comp["character_card"]:
             blocks.append(f"[CHARACTER_CARD]\n{sys_comp['character_card']}")
+        else:
+            blocks.append("[CHARACTER_CARD]\n（未识别：当前卡带未提供角色卡数据）")
 
         # --- [USER_PROFILE] ---
         if sys_comp["user_profile"]:
             blocks.append(f"[USER_PROFILE]\n{sys_comp['user_profile']}")
+        else:
+            blocks.append("[USER_PROFILE]\n（未识别：当前卡带未提供用户画像数据）")
 
         # --- [CURRENT_STATE] ---
         current_state_block = """[CURRENT_STATE]
@@ -159,12 +163,19 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         blocks.append(current_state_block)
 
         # --- WORKING_MEMORY（不加入 blocks，稍后追加到 user 消息）---
+        # 辅助：去掉 user 消息末尾追加的 [系统约束]，只保留原始对话内容
+        def _strip_user_constraint(text: str) -> str:
+            idx = text.find("\n\n[系统约束]")
+            if idx >= 0:
+                return text[:idx].rstrip()
+            return text
+
         working_memory_lines = ["[WORKING_MEMORY]"]
         working_memory_lines.append("（以下为最近 5 轮对话，反映当前即时语境）")
         working_memory_lines.append("")
         if recent_rounds:
             for i, rd in enumerate(recent_rounds):
-                um = rd.get("user", "")
+                um = _strip_user_constraint(rd.get("user", ""))
                 am = rd.get("assistant", "")
                 if um:
                     um_s = um[:200] + ("..." if len(um) > 200 else "")
@@ -175,7 +186,8 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         else:
             working_memory_lines.append("  （无最近对话记录）")
         if last_input:
-            li_s = last_input[:200] + ("..." if len(last_input) > 200 else "")
+            li = _strip_user_constraint(last_input)
+            li_s = li[:200] + ("..." if len(li) > 200 else "")
             working_memory_lines.append(f"  [当前输入] {user_name or '用户'}: {li_s}")
         working_memory_text = "\n".join(working_memory_lines)
 
@@ -212,6 +224,8 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
             mem_lines.append("")
             mem_lines.append("记忆是丰富对话的工具，而非对话焦点。")
             blocks.append("\n".join(mem_lines))
+        else:
+            blocks.append("[LONG_TERM_MEMORY]\n（未识别：暂无长期记忆数据）")
 
         # --- [RECENT_MEMORY] ---
         try:
@@ -224,8 +238,10 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                     if line.strip():
                         rml.append(line.strip())
                 blocks.append("\n".join(rml))
+            else:
+                blocks.append("[RECENT_MEMORY]\n（未识别：暂无近期记忆摘要）")
         except Exception:
-            pass
+            blocks.append("[RECENT_MEMORY]\n（未识别：暂无近期记忆摘要）")
 
         # --- [USER_INTENT_TAG] → 合并到 WORKING_MEMORY ---
         if intent_result and intent_result.should_use() and intent_result.implicit_instruction:
@@ -237,6 +253,8 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
         # --- [WORLD_CONTEXT] ---
         if sys_comp.get("world_book") and sys_comp["world_book"].strip():
             blocks.append(f"[WORLD_CONTEXT]\n{sys_comp['world_book'].strip()}")
+        else:
+            blocks.append("[WORLD_CONTEXT]\n（未识别：当前卡带未提供世界观设定）")
 
         # --- [OUTPUT_SPEC] ---
         output_spec_lines = [
@@ -319,6 +337,7 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                 detail=f"字符: {len(optimized_system)}",
                 duration_ms=0,
                 status="ok",
+                full_action=f"Prompt 组装完成 | 区块: {len(blocks)}\n区块列表: {', '.join(block_names)}",
             ))
         except Exception:
             pass
@@ -362,18 +381,31 @@ async def context_assemble_node(state: "AgentState") -> "AgentState":
                 "3. 适当推进剧情，但核心决策留给用户"
                 + narrative_rules
             )
+        # 先清理所有历史 user 消息中已追加的 [系统约束]，避免 token 浪费和重复
+        for msg in messages_list:
+            if msg.get("role") == "user":
+                msg["content"] = _strip_user_constraint(msg["content"])
+
+        # 找到最后一条 user 消息，只在此处追加 [系统约束] 和 WORKING_MEMORY
         last_user_idx = -1
         for i in range(len(messages_list) - 1, -1, -1):
             if messages_list[i].get("role") == "user":
                 last_user_idx = i
                 break
 
-        for i, msg in enumerate(messages_list):
-            if msg.get("role") == "user":
-                if "[系统约束]" not in msg["content"]:
-                    msg["content"] = msg["content"].rstrip() + user_constraint
-                if i == last_user_idx and working_memory_text:
-                    msg["content"] = msg["content"].rstrip() + "\n\n" + working_memory_text
+        if last_user_idx >= 0:
+            messages_list[last_user_idx]["content"] = (
+                messages_list[last_user_idx]["content"].rstrip() + user_constraint
+            )
+            if working_memory_text:
+                messages_list[last_user_idx]["content"] = (
+                    messages_list[last_user_idx]["content"].rstrip() + "\n\n" + working_memory_text
+                )
+
+        # 把追加到 user 消息的模块也加入 blocks（供调试面板查看完整拼装）
+        blocks.append(f"[USER_CONSTRAINT]\n{user_constraint.strip()}")
+        if working_memory_text:
+            blocks.append(working_memory_text)
 
         summary = f"区块: {len(blocks)}, 字符: {len(optimized_system)}, user_msg: {len(messages_list)}"
 

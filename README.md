@@ -90,7 +90,7 @@ AURA's architecture is grounded in **narratology**, not just engineering practic
 | **8-Layer Character Model** | Validated | Definitions locked, schema finalized |
 | **Event Bus Design** | Validated | EventPatch schema, causal fields, visibility rules |
 | **Dual-Output Architecture** | Defined | `narrative` + `structured` single-call output |
-| **Mode A: Prompt Compiler** | v0.8 runnable | 15-node LangGraph workflow, TAVO-compatible |
+| **Mode A: Prompt Compiler** | v1.1 runnable | Multi-turn chat persistence, context restoration, raw prompt observability |
 | **Mode B: World Platform** | Architecture validated | Director + NPC Agent design locked |
 | **Sequence Layer** | Defined | PresetSequence (Galgame) + DynamicSequence (open world) |
 | **Knowledge Graph Engine** | Defined | Neo4j relation network + causal graph (multi-hop reasoning, indirect association) |
